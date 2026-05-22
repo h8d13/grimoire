@@ -56,7 +56,7 @@ jobs:
         env:
           DEBUG: "1"
         run: |
-          sudo -u builder ./grimaur --use-ssh fetch --force $PKG 2>&1 | tee /tmp/ssh.log || true
-          grep -q 'ssh://aur@aur.archlinux.org' /tmp/ssh.log
+          sudo -u builder ./grimaur --use-ssh --shallow --repo-url https://github.com/h8d13/archinstoo $PKG 2>&1 | tee /tmp/ssh.log || true
+          cat /tmp/ssh.log
 
       - run: ./grimaur list
