@@ -8,9 +8,9 @@ recursively resolve and install dependencies by building packages locally with
 makepkg. Official repository dependencies are installed with pacman when they are
 missing.
 
-## /* SPDX-FileCopyrightText: 2025
-# (O) Marcus A. <placeholder@placeholder.com>
-# (C) Eihdran L. <hadean-eon-dev@proton.me>
+## /* SPDX-FileCopyrightText: 2026
+# (O) Marcus A.
+# (C) Eihdran L.
 
 ##  SPDX-License-Identifier: MIT */
 
@@ -36,15 +36,13 @@ from collections.abc import Iterable, Sequence
 
 
 def get_aur_remote() -> str:
-    return (
-        "git@github.com:archlinux/aur.git"
-        if USE_SSH
-        else "https://github.com/archlinux/aur.git"
-    )
+    url = "https://github.com/archlinux/aur.git"
+    return _maybe_ssh_rewrite(url) if USE_SSH else url
 
 
 def get_official_aur_git_base() -> str:
-    return "ssh://aur@aur.archlinux.org" if USE_SSH else "https://aur.archlinux.org"
+    url = "https://aur.archlinux.org"
+    return _maybe_ssh_rewrite(url) if USE_SSH else url
 
 
 CGIT_RAW_BASE = "https://aur.archlinux.org/cgit/aur.git/plain"
@@ -72,6 +70,32 @@ _AUR_INFO_CACHE: dict[str, dict | None] = {}
 _RPC_FALLBACK_NOTIFIED = False
 
 _COMMON_AUR_SUFFIXES = ("-bin",)
+
+# Map of hosts to the SSH user used by their git endpoint.
+# --use-ssh rewrites https://<host>/<path> -> ssh://<user>@<host>/<path>(.git)
+# Useful for --repo-url too, when the URL host is in this map.
+SSH_REWRITE_HOSTS = {
+    "github.com": "git",
+    "gitlab.com": "git",
+    "codeberg.org": "git",
+    "aur.archlinux.org": "aur",
+}
+
+
+def _maybe_ssh_rewrite(url: str) -> str:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return url
+    user = SSH_REWRITE_HOSTS.get(parsed.netloc)
+    if user is None:
+        return url
+    path = parsed.path.lstrip("/").rstrip("/")
+    if not path:
+        return f"ssh://{user}@{parsed.netloc}"
+    if not path.endswith(".git"):
+        path += ".git"
+    return f"ssh://{user}@{parsed.netloc}/{path}"
+
 
 _GLOBAL_FLAG_OPTIONS = {
     "--refresh",
@@ -312,7 +336,7 @@ def ensure_clone(
             )
 
     if repo_url:
-        remote_url = repo_url
+        remote_url = _maybe_ssh_rewrite(repo_url) if USE_SSH else repo_url
         clone_extra: list[str] = []
         fetch_refspec: tuple[str, ...] = ()
         reset_targets: tuple[str, ...] = ("origin/HEAD",)
