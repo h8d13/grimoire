@@ -24,6 +24,7 @@ import re
 import shutil
 import subprocess
 import sys
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -63,6 +64,7 @@ USE_AUR_RPC = False
 FORCE_GIT_MIRROR = False
 USE_SSH = False
 SHALLOW_CLONE = False
+DEBUG = os.environ.get("DEBUG", "").lower() in ("1", "true", "yes")
 _INSTALLED_CACHE: set[str] | None = None
 _PROVIDES_CACHE: dict[str, set[str] | None] = {}
 _VIRTUAL_PROVIDER_CACHE: dict[str, str | None] = {}
@@ -174,6 +176,8 @@ def aur_rpc_call(params: dict[str, Any]) -> dict[str, Any]:
     query_params.update(params)
     query = urllib.parse.urlencode(query_params, doseq=True)
     url = f"{AUR_RPC_ENDPOINT}?{query}"
+    if DEBUG:
+        print(f"+ GET {url}", file=sys.stderr)
     try:
         with urllib.request.urlopen(url, timeout=10) as response:
             status = response.getcode()
@@ -263,7 +267,9 @@ def run_command(
     check: bool = True,
     env: dict | None = None,
 ) -> subprocess.CompletedProcess | str:
-    """Run a command, optionally capturing stdout, and surface errors nicely."""
+    if DEBUG:
+        cwd_hint = f" (cwd={cwd})" if cwd else ""
+        print(f"+ {' '.join(cmd)}{cwd_hint}", file=sys.stderr)
     try:
         completed = subprocess.run(
             list(cmd),
@@ -891,6 +897,8 @@ def fetch_git_file(package: str, path: str) -> str | None:
         url = f"{CGIT_RAW_BASE}/{safe_path}?h={safe_package}"
     else:
         url = f"{GITHUB_RAW_BASE}/{safe_package}/{safe_path}"
+    if DEBUG:
+        print(f"+ GET {url}", file=sys.stderr)
     try:
         with urllib.request.urlopen(url, timeout=10) as response:
             if response.status != 200:
@@ -2162,6 +2170,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("Unknown command")
     except AurGitError as exc:
         print(f"error: {exc}", file=sys.stderr)
+        if DEBUG:
+            traceback.print_exc(file=sys.stderr)
         return 1
 
     return 0
