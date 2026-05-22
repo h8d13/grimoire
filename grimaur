@@ -15,7 +15,9 @@ missing.
 ##  SPDX-License-Identifier: MIT */
 
 Requirements: git, makepkg, pacman, and sudo/doas/run0 or root.
-Elevation can be specified in last line of `makepkg.conf`.
+Elevation preference is read from `PACMAN_AUTH=(...)` in makepkg.conf
+(~/.config/pacman/makepkg.conf, ~/.makepkg.conf, then /etc/makepkg.conf);
+falls back to sudo, doas, run0 in that order.
 """
 
 import argparse
@@ -83,10 +85,36 @@ SHALLOW_CLONE = False
 DEBUG = os.environ.get("DEBUG", "").lower() in ("1", "true", "yes")
 _INSTALLED_CACHE: set[str] | None = None
 _ELEV_TOOLS = ("sudo", "doas", "run0")
+_PACMAN_AUTH_RE = re.compile(r'^\s*PACMAN_AUTH\s*=\s*\(?\s*"?([^"\s)]+)"?')
+
+
+def _makepkg_conf_paths() -> tuple[Path, ...]:
+	xdg = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+	return (
+		Path(xdg) / "pacman/makepkg.conf",
+		Path.home() / ".makepkg.conf",
+		Path("/etc/makepkg.conf"),
+	)
+
+
+def _read_pacman_auth() -> str | None:
+	for path in _makepkg_conf_paths():
+		try:
+			content = path.read_text()
+		except OSError:
+			continue
+		for line in content.splitlines():
+			match = _PACMAN_AUTH_RE.match(line)
+			if match:
+				return match.group(1)
+	return None
 
 
 @cache
 def _get_elev() -> str:
+	preferred = _read_pacman_auth()
+	if preferred and shutil.which(preferred):
+		return preferred
 	for tool in _ELEV_TOOLS:
 		if shutil.which(tool):
 			return tool
