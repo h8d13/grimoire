@@ -65,6 +65,7 @@ USE_COLOR = False
 USE_AUR_RPC = False
 FORCE_GIT_MIRROR = False
 USE_SSH = False
+SHALLOW_CLONE = False
 _INSTALLED_CACHE: set[str] | None = None
 _PROVIDES_CACHE: dict[str, set[str] | None] = {}
 _VIRTUAL_PROVIDER_CACHE: dict[str, str | None] = {}
@@ -79,6 +80,7 @@ _GLOBAL_FLAG_OPTIONS = {
     "--aur-rpc",
     "--git-mirror",
     "--use-ssh",
+    "--shallow",
 }
 _GLOBAL_VALUE_OPTIONS = {"--dest-root"}
 
@@ -336,7 +338,11 @@ def ensure_clone(
             return package_dir
         if package_dir.exists():
             shutil.rmtree(package_dir)
-        run_command(["git", "clone", repo_url, str(package_dir)])
+        clone_cmd = ["git", "clone"]
+        if SHALLOW_CLONE:
+            clone_cmd += ["--depth=1"]
+        clone_cmd += [repo_url, str(package_dir)]
+        run_command(clone_cmd)
     elif USE_AUR_RPC:
         remote_url = f"{get_official_aur_git_base()}/{package}.git"
         if (
@@ -368,7 +374,11 @@ def ensure_clone(
             return package_dir
         if package_dir.exists():
             shutil.rmtree(package_dir)
-        run_command(["git", "clone", remote_url, str(package_dir)])
+        clone_cmd = ["git", "clone"]
+        if SHALLOW_CLONE:
+            clone_cmd += ["--depth=1"]
+        clone_cmd += [remote_url, str(package_dir)]
+        run_command(clone_cmd)
     else:
         if (
             package_dir.exists()
@@ -391,17 +401,17 @@ def ensure_clone(
             return package_dir
         if package_dir.exists():
             shutil.rmtree(package_dir)
-        run_command(
-            [
-                "git",
-                "clone",
-                "--branch",
-                package,
-                "--single-branch",
-                get_aur_remote(),
-                str(package_dir),
-            ]
-        )
+        clone_cmd = [
+            "git",
+            "clone",
+            "--branch",
+            package,
+            "--single-branch",
+        ]
+        if SHALLOW_CLONE:
+            clone_cmd += ["--depth=1"]
+        clone_cmd += [get_aur_remote(), str(package_dir)]
+        run_command(clone_cmd)
 
     return package_dir
 
@@ -1925,6 +1935,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Use SSH instead of HTTPS for git operations",
     )
+    parser.add_argument(
+        "--shallow",
+        action="store_true",
+        help="Use shallow clones (--depth=1); default is full history",
+    )
     subparsers = parser.add_subparsers(dest="command")
 
     fetch_parser = subparsers.add_parser(
@@ -2099,11 +2114,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.print_help()
         return 0
 
-    global USE_COLOR, USE_AUR_RPC, FORCE_GIT_MIRROR, USE_SSH
+    global USE_COLOR, USE_AUR_RPC, FORCE_GIT_MIRROR, USE_SSH, SHALLOW_CLONE
     USE_COLOR = not getattr(args, "no_color", False) and sys.stdout.isatty()
     USE_AUR_RPC = bool(getattr(args, "aur_rpc", True))
     FORCE_GIT_MIRROR = not USE_AUR_RPC
     USE_SSH = bool(getattr(args, "use_ssh", False))
+    SHALLOW_CLONE = bool(getattr(args, "shallow", False))
 
     try:
         if args.command == "fetch":

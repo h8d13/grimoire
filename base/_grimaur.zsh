@@ -12,6 +12,8 @@ _grimaur() {
         '--no-color[Disable colored output]'
         '--aur-rpc[Use AUR RPC API (default)]'
         '--git-mirror[Use git mirror instead of AUR RPC]'
+        '--use-ssh[Use SSH instead of HTTPS for git operations]'
+        '--shallow[Use shallow clones (--depth=1); default is full history]'
     )
 
     _arguments -C \
