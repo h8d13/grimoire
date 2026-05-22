@@ -6,7 +6,21 @@ the git mirror at https://github.com/archlinux/aur.git when the endpoint is
 unavailable. Each package lives on its own branch in the mirror, and grimaur can
 recursively resolve and install dependencies by building packages locally with
 makepkg. Official repository dependencies are installed with pacman when they are
-missing.
+missing. In a single truth python file.
+
+      __...--~~~~~-._   _.-~~~~~--...__
+
+    //               `V'               \\ 
+
+   //                 |                 \\ 
+
+  //__...--~~~~~~-._  |  _.-~~~~~~--...__\\ 
+
+ //__.....----~~~~._\ | /_.~~~~----.....__\\
+
+====================\\|//====================
+
+                grimaur `0.1.2`
 
 ## /* SPDX-FileCopyrightText: 2026
 # (O) Marcus A.
@@ -15,9 +29,6 @@ missing.
 ##  SPDX-License-Identifier: MIT */
 
 Requirements: git, makepkg, pacman, and sudo/doas/run0/su.
-Elevation preference is read from `PACMAN_AUTH=(...)` in makepkg.conf
-(~/.config/pacman/makepkg.conf, ~/.makepkg.conf, then /etc/makepkg.conf);
-falls back to sudo, doas, run0, then su in that order.
 """
 
 import argparse
