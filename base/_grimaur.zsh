@@ -43,12 +43,14 @@ _grimaur() {
                     _arguments \
                         $global_opts \
                         '--force[Reclone even if directory exists]' \
+                        '--repo-url[Clone from custom Git URL]:url:' \
                         '1:package:_grimaur_aur_packages'
                     ;;
                 install)
                     _arguments \
                         $global_opts \
                         '--noconfirm[Pass --noconfirm to pacman/makepkg]' \
+                        '--repo-url[Clone from custom Git URL]:url:' \
                         '1:package:_grimaur_aur_packages'
                     ;;
                 remove)
@@ -64,12 +66,15 @@ _grimaur() {
                         '--noconfirm[Pass --noconfirm to pacman/makepkg]' \
                         '--devel[Include VCS/devel packages]' \
                         '--global[Update official repositories with pacman -Syu first]' \
+                        '--system-only[With --global, only update system packages and skip AUR updates]' \
+                        '--index[With --global, only sync package databases (pacman -Sy)]' \
+                        '--download[With --global, download updates without installing (pacman -Syuw)]' \
+                        '--install[With --global, install already-downloaded packages (pacman -Su)]' \
                         '*:packages:_grimaur_foreign_packages'
                     ;;
                 search)
                     _arguments \
                         $global_opts \
-                        '--regex[Treat pattern as regular expression]' \
                         '--limit[Limit results]:number:(10 20 50 100)' \
                         '--no-interactive[Disable interactive selection]' \
                         '--noconfirm[Skip confirmation prompts]' \
@@ -80,6 +85,7 @@ _grimaur() {
                         $global_opts \
                         '--target[Which data to show]:target:(info PKGBUILD SRCINFO)' \
                         '--full[Include make/check/optional dependencies]' \
+                        '--repo-url[Inspect package from custom Git URL]:url:' \
                         '1:package:_grimaur_aur_packages'
                     ;;
                 list)
