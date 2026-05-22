@@ -13,16 +13,16 @@ source=("$pkgname::git+$url.git")
 sha256sums=('SKIP')
 
 pkgver() {
-  cd "${srcdir}/${pkgname}"
-  if git describe --tags --long >/dev/null 2>&1; then
-    git describe --tags --long | sed 's/^v//;s/-/./g'
-  else
-    printf 'r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
-  fi
+	cd "${srcdir}/${pkgname}"
+	if git describe --tags --long >/dev/null 2>&1; then
+		git describe --tags --long | sed 's/^v//;s/-/./g'
+	else
+		printf 'r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+	fi
 }
 
 package() {
-  cd "${srcdir}/${pkgname}"
-  install -Dm755 grimaur "${pkgdir}/usr/bin/grimaur"
-  sed -i "s/^__version__ = .*/__version__ = \"${pkgver}\"/" "${pkgdir}/usr/bin/grimaur"
+	cd "${srcdir}/${pkgname}"
+	install -Dm755 grimaur "${pkgdir}/usr/bin/grimaur"
+	sed -i "s/^__version__ = .*/__version__ = \"${pkgver}\"/" "${pkgdir}/usr/bin/grimaur"
 }
