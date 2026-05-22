@@ -1066,6 +1066,7 @@ def install_package(
 	visited: set[str] | None = None,
 	preinstalled_official: set[str] | None = None,
 	repo_url: str | None = None,
+	update_to: str | None = None,
 ) -> None:
 	visited = visited or set()
 	if package in visited:
@@ -1074,10 +1075,19 @@ def install_package(
 
 	if is_installed(package):
 		installed_ver = get_installed_version(package)
-		print(f"Package {style(package, BOLD)} is already installed ({installed_ver})")
-		if not noconfirm and not prompt_confirm(style("Reinstall? [y/N]: ", YELLOW)):
-			print("Cancelled installation.")
-			return
+		if update_to:
+			print(
+				f"Updating {style(package, BOLD)} ({installed_ver} -> {update_to})"
+			)
+		else:
+			print(
+				f"Package {style(package, BOLD)} is already installed ({installed_ver})"
+			)
+			if not noconfirm and not prompt_confirm(
+				style("Reinstall? [y/N]: ", YELLOW)
+			):
+				print("Cancelled installation.")
+				return
 
 	if preinstalled_official is None:
 		preinstalled_official = set()
@@ -1405,6 +1415,12 @@ def update_packages(
 	shared_visited: set[str] = set()
 	shared_preinstalled_official: set[str] = set()
 	for candidate in selected_candidates:
+		if candidate.target_version:
+			update_to = candidate.target_version
+		elif candidate.remote_head:
+			update_to = candidate.remote_head[:7]
+		else:
+			update_to = "newer"
 		try:
 			install_package(
 				candidate.name,
@@ -1413,6 +1429,7 @@ def update_packages(
 				noconfirm=noconfirm,
 				visited=shared_visited,
 				preinstalled_official=shared_preinstalled_official,
+				update_to=update_to,
 			)
 		except AurGitError as exc:
 			print(f"error updating {candidate.name}: {exc}", file=sys.stderr)
