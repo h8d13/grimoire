@@ -26,6 +26,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 import traceback
 import urllib.error
 import urllib.parse
@@ -35,6 +36,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from collections.abc import Iterable, Sequence
+
+
+def _read_version() -> str:
+	pyproject = Path(__file__).resolve().parent / "pyproject.toml"
+	try:
+		with pyproject.open("rb") as fh:
+			data = tomllib.load(fh)
+	except OSError:
+		return "unknown"
+	version = data.get("project", {}).get("version")
+	return version if isinstance(version, str) else "unknown"
+
+
+__version__ = _read_version()
 
 
 def get_aur_remote() -> str:
@@ -115,6 +130,7 @@ _GLOBAL_FLAG_OPTIONS = {
 	"--git-mirror",
 	"--use-ssh",
 	"--shallow",
+	"--version",
 }
 _GLOBAL_VALUE_OPTIONS = {"--dest-root"}
 
@@ -1871,9 +1887,23 @@ def fetch_package(
 	return package_dir
 
 
+class _GrimaurArgParser(argparse.ArgumentParser):
+	def __init__(self, *args, **kwargs):
+		super().__init__(*args, **kwargs)
+		for action in self._actions:
+			if isinstance(action, argparse._HelpAction):
+				action.help = "Show this help message and exit"
+
+
 def build_parser() -> argparse.ArgumentParser:
-	parser = argparse.ArgumentParser(
+	parser = _GrimaurArgParser(
 		description="Work with AUR packages via the git mirror or AUR RPC"
+	)
+	parser.add_argument(
+		"--version",
+		action="version",
+		version=f"grimaur {__version__}",
+		help="Show version and exit",
 	)
 	parser.add_argument(
 		"--dest-root",
