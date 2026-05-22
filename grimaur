@@ -29,7 +29,6 @@ import shlex
 import shutil
 import subprocess
 import sys
-import tomllib
 import traceback
 import urllib.error
 import urllib.parse
@@ -42,18 +41,7 @@ from typing import Any
 from collections.abc import Iterable, Sequence
 
 
-def _read_version() -> str:
-	pyproject = Path(__file__).resolve().parent / "pyproject.toml"
-	try:
-		with pyproject.open("rb") as fh:
-			data = tomllib.load(fh)
-	except OSError:
-		return "unknown"
-	version = data.get("project", {}).get("version")
-	return version if isinstance(version, str) else "unknown"
-
-
-__version__ = _read_version()
+__version__ = "dev"
 
 
 def get_aur_remote() -> str:
