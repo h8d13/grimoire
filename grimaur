@@ -516,7 +516,6 @@ def _reset_git_worktree(package_dir: Path, refs: Sequence[str]) -> None:
 
 
 def is_regex(pattern: str) -> bool:
-    """Check if pattern contains regex metacharacters."""
     regex_chars = r'.*+?[]{}()^$|\\'
     return any(char in pattern for char in regex_chars)
 
