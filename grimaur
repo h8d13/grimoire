@@ -2083,7 +2083,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         "complete",
         "list",
     }
-    if argv_list and not argv_list[0].startswith("-") and argv_list[0] not in commands:
+    # Hoist global flags so they can appear after the subcommand too
+    # (e.g. `grimaur update --git-mirror` instead of only `grimaur --git-mirror update`).
+    if argv_list:
+        implicit_search = (
+            not argv_list[0].startswith("-") and argv_list[0] not in commands
+        )
         reordered: list[str] = []
         remaining: list[str] = []
         i = 0
@@ -2104,10 +2109,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             else:
                 remaining.append(item)
             i += 1
-        else:
-            # ensure natural exit when loop completes without break
-            pass
-        argv_list = reordered + ["search"] + remaining
+        if implicit_search:
+            argv_list = reordered + ["search"] + remaining
+        elif reordered:
+            argv_list = reordered + remaining
 
     parser = build_parser()
     args = parser.parse_args(argv_list)
