@@ -16,26 +16,13 @@ API and **automatically falls back to the official git mirror when the endpoint 
 ### Deps
 `sudo pacman -S --needed git base-devel`
 
-#### Directly from the AUR
-   ```bash
-   git clone https://aur.archlinux.org/grimaur-git.git
-   cd grimaur-git
-   makepkg -si
-   ```
-
-#### From the git mirror
-   ```bash
-   git clone --branch grimaur-git --single-branch https://github.com/archlinux/aur.git grimaur-git
-   cd grimaur-git
-   makepkg -si
-   ```
-
-#### From Python directly
+#### From Github/Python directly
    ```bash
    git clone https://github.com/ryk4rd/grimaur
    cd grimaur
    chmod +x grimaur
-   ./grimaur <command>
+   ./grimaur <command> # try --help 
+   # or install globally makepkg -si
    ```
 
 ## Usage
