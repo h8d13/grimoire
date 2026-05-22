@@ -22,7 +22,7 @@ jobs:
 
       - run: pacman-key --init
       - run: pacman --noconfirm -Sy archlinux-keyring
-      - run: pacman --noconfirm -S --needed git python base-devel openssh
+      - run: pacman --noconfirm -S --needed git python base-devel
 
       - run: ./grimaur --help
       - run: ./grimaur fetch $PKG
@@ -34,7 +34,7 @@ jobs:
           rm -rf ~/.cache/aurgit
           ./grimaur --shallow fetch $PKG
           count=$(git -C ~/.cache/aurgit/$PKG rev-list --count HEAD)
-          [ "$count" = "1" ] || { echo "expected 1, got $count"; exit 1; }
+          [ "$count" = "1" ]; echo "got $count, test pass." || { echo "expected 1, got $count"; exit 1; }
 
       - run: ./grimaur --git-mirror fetch --force $PKG
       - run: ./grimaur fetch --force $PKG --git-mirror
