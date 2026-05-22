@@ -293,7 +293,6 @@ def ensure_clone(
     force_reclone: bool = False,
     repo_url: str | None = None,
 ) -> Path:
-    """Clone or refresh the package branch into dest_root/package."""
     dest_root.mkdir(parents=True, exist_ok=True)
     package_dir = dest_root / package
 
@@ -749,7 +748,6 @@ def resolve_aur_dependency(dep: str) -> str | None:
 
 
 def resolve_official_dependency(dep: str) -> str | None:
-    """Return the repo package that satisfies dep, accounting for providers."""
     if exists_in_sync_repo(dep):
         return dep
     try:
@@ -951,7 +949,6 @@ def collect_missing_official_packages(
     refresh: bool,
     visited: set[str] | None = None,
 ) -> tuple[set[str], set[str]]:
-    """Return official packages missing for the dependency tree rooted at package."""
     visited = visited or set()
     if package in visited:
         return set(), set()
