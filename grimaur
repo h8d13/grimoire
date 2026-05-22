@@ -620,6 +620,7 @@ def invalidate_installed_cache() -> None:
 def installed_package_set() -> set[str]:
     global _INSTALLED_CACHE
     if _INSTALLED_CACHE is None:
+        # we can still search without pacman installed.
         if shutil.which("pacman") is None:
             _INSTALLED_CACHE = set()
         else:
@@ -2124,6 +2125,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     USE_SSH = bool(getattr(args, "use_ssh", False))
     SHALLOW_CLONE = bool(getattr(args, "shallow", False))
 
+    # fallback when /tmp is not writable, use our default + .tmp.
     current_tmp = os.environ.get("TMPDIR") or "/tmp"
     if not os.access(current_tmp, os.W_OK):
         fallback_tmp = dest_root / ".tmp"
