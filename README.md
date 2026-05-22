@@ -9,28 +9,28 @@ API and **automatically falls back to the official git mirror when the endpoint 
 <br clear="left">
 
 > [!TIP]
-> When the AUR is down, run commands with `--git-mirror` 
+> When the AUR is down, for example: `grimaur <package> --git-mirror` to bypass the RPC entirely, this ensures higher uptimes.
 
 ## Install
 
 ### Deps
 `sudo pacman -S --needed git base-devel`
 
-### Directly from the AUR
+#### Directly from the AUR
    ```bash
    git clone https://aur.archlinux.org/grimaur-git.git
    cd grimaur-git
    makepkg -si
    ```
 
-### From the git mirror
+#### From the git mirror
    ```bash
    git clone --branch grimaur-git --single-branch https://github.com/archlinux/aur.git grimaur-git
    cd grimaur-git
    makepkg -si
    ```
 
-### From Python directly
+#### From Python directly
    ```bash
    git clone https://github.com/ryk4rd/grimaur
    cd grimaur
