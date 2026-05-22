@@ -14,7 +14,8 @@ missing.
 
 ##  SPDX-License-Identifier: MIT */
 
-Requirements: git, makepkg, pacman, and (for installing official packages) sudo/root.
+Requirements: git, makepkg, pacman, and sudo/doas/run0 or root.
+Elevation can be specified in last line of `makepkg.conf`.
 """
 
 import argparse
@@ -65,6 +66,15 @@ USE_SSH = False
 SHALLOW_CLONE = False
 DEBUG = os.environ.get("DEBUG", "").lower() in ("1", "true", "yes")
 _INSTALLED_CACHE: set[str] | None = None
+_ELEV_TOOLS = ("sudo", "doas", "run0")
+
+
+def _get_elev() -> str:
+	for tool in _ELEV_TOOLS:
+		if shutil.which(tool):
+			return tool
+	raise AurGitError("No privilege elevation tool found.")
+
 _PROVIDES_CACHE: dict[str, set[str] | None] = {}
 _VIRTUAL_PROVIDER_CACHE: dict[str, str | None] = {}
 _AUR_INFO_CACHE: dict[str, dict | None] = {}
@@ -971,7 +981,7 @@ def install_official_packages(packages: Iterable[str], *, noconfirm: bool) -> No
 		cmd.append("--noconfirm")
 	cmd.extend(pkgs)
 	if os.geteuid() != 0:
-		cmd.insert(0, "sudo")
+		cmd.insert(0, _get_elev())
 	print(f"Installing official packages: {' '.join(pkgs)}")
 	run_command(cmd)
 	invalidate_installed_cache()
@@ -1186,7 +1196,7 @@ def remove_package(
 		cmd.append("--noconfirm")
 
 	if os.geteuid() != 0:
-		cmd.insert(0, "sudo")
+		cmd.insert(0, _get_elev())
 
 	print(f"Removing package {style(package, BOLD)}")
 	try:
@@ -1264,7 +1274,7 @@ def update_packages(
 			cmd.append("--noconfirm")
 
 		if os.geteuid() != 0:
-			cmd.insert(0, "sudo")
+			cmd.insert(0, _get_elev())
 
 		print(style("Updating system packages first...", CYAN))
 		try:
@@ -1286,7 +1296,7 @@ def update_packages(
 			)
 			print(
 				style(
-					"Run 'grimaur update --global --install' or 'sudo pacman -Su' to install them.",
+					f"Run 'grimaur update --global --install' or '{_get_elev()} pacman -Su' to install them.",
 					YELLOW,
 				)
 			)
