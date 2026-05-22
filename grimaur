@@ -322,93 +322,60 @@ def ensure_clone(
             )
 
     if repo_url:
-        if (
-            package_dir.exists()
-            and (package_dir / ".git").is_dir()
-            and not force_reclone
-        ):
-            if refresh:
-                run_command(["git", "-C", str(package_dir), "fetch", "origin"])
-                run_command(
-                    ["git", "-C", str(package_dir), "reset", "--hard", "origin/HEAD"]
-                )
-            return package_dir
-        if package_dir.exists():
-            shutil.rmtree(package_dir)
-        clone_cmd = ["git", "clone"]
-        if SHALLOW_CLONE:
-            clone_cmd += ["--depth=1"]
-        clone_cmd += [repo_url, str(package_dir)]
-        run_command(clone_cmd)
+        remote_url = repo_url
+        clone_extra: list[str] = []
+        fetch_refspec: tuple[str, ...] = ()
+        reset_targets: tuple[str, ...] = ("origin/HEAD",)
+        recover_on_reset_fail = False
     elif USE_AUR_RPC:
         remote_url = f"{get_official_aur_git_base()}/{package}.git"
-        if (
-            package_dir.exists()
-            and (package_dir / ".git").is_dir()
-            and not force_reclone
-        ):
-            if refresh:
-                run_command(["git", "-C", str(package_dir), "fetch", "origin"])
-                try:
-                    _reset_git_worktree(
-                        package_dir,
-                        (
-                            "origin/HEAD",
-                            "origin/master",
-                            "origin/main",
-                            f"origin/{package}",
-                        ),
-                    )
-                except AurGitError:
-                    if package_dir.exists():
-                        shutil.rmtree(package_dir)
-                    return ensure_clone(
-                        package,
-                        dest_root,
-                        refresh=False,
-                        force_reclone=True,
-                    )
-            return package_dir
-        if package_dir.exists():
-            shutil.rmtree(package_dir)
-        clone_cmd = ["git", "clone"]
-        if SHALLOW_CLONE:
-            clone_cmd += ["--depth=1"]
-        clone_cmd += [remote_url, str(package_dir)]
-        run_command(clone_cmd)
+        clone_extra = []
+        fetch_refspec = ()
+        reset_targets = (
+            "origin/HEAD",
+            "origin/master",
+            "origin/main",
+            f"origin/{package}",
+        )
+        recover_on_reset_fail = True
     else:
-        if (
-            package_dir.exists()
-            and (package_dir / ".git").is_dir()
-            and not force_reclone
-        ):
-            if refresh:
-                run_command(["git", "-C", str(package_dir), "fetch", "origin", package])
-                try:
-                    _reset_git_worktree(package_dir, (f"origin/{package}",))
-                except AurGitError:
-                    if package_dir.exists():
-                        shutil.rmtree(package_dir)
-                    return ensure_clone(
-                        package,
-                        dest_root,
-                        refresh=False,
-                        force_reclone=True,
-                    )
-            return package_dir
-        if package_dir.exists():
-            shutil.rmtree(package_dir)
-        clone_cmd = [
-            "git",
-            "clone",
-            "--branch",
-            package,
-            "--single-branch",
-        ]
-        if SHALLOW_CLONE:
-            clone_cmd += ["--depth=1"]
-        clone_cmd += [get_aur_remote(), str(package_dir)]
-        run_command(clone_cmd)
+        remote_url = get_aur_remote()
+        clone_extra = ["--branch", package, "--single-branch"]
+        fetch_refspec = (package,)
+        reset_targets = (f"origin/{package}",)
+        recover_on_reset_fail = True
+
+    if (
+        package_dir.exists()
+        and (package_dir / ".git").is_dir()
+        and not force_reclone
+    ):
+        if refresh:
+            fetch_cmd = ["git", "-C", str(package_dir), "fetch", "origin", *fetch_refspec]
+            run_command(fetch_cmd)
+            try:
+                _reset_git_worktree(package_dir, reset_targets)
+            except AurGitError:
+                if not recover_on_reset_fail:
+                    raise
+                if package_dir.exists():
+                    shutil.rmtree(package_dir)
+                return ensure_clone(
+                    package,
+                    dest_root,
+                    refresh=False,
+                    force_reclone=True,
+                    repo_url=repo_url,
+                )
+        return package_dir
+
+    if package_dir.exists():
+        shutil.rmtree(package_dir)
+    clone_cmd = ["git", "clone", *clone_extra]
+    if SHALLOW_CLONE:
+        clone_cmd += ["--depth=1"]
+    clone_cmd += [remote_url, str(package_dir)]
+    run_command(clone_cmd)
 
     return package_dir
 

@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux/archlinux:latest
+      options: --privileged
+
+    env:
+      PKG: yay
+      PATTERN: python
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: pacman-key --init
+      - run: pacman --noconfirm -Sy archlinux-keyring
+      - run: pacman --noconfirm -S --needed git python base-devel
+
+      - run: ./grimaur --help
+      - run: ./grimaur list
+      - run: ./grimaur fetch $PKG
+      - run: ./grimaur --refresh fetch $PKG
+      - run: ./grimaur fetch --force $PKG
+
+      - name: Shallow clone is depth=1
+        run: |
+          rm -rf ~/.cache/aurgit
+          ./grimaur --shallow fetch $PKG
+          count=$(git -C ~/.cache/aurgit/$PKG rev-list --count HEAD)
+          [ "$count" = "1" ] || { echo "expected 1, got $count"; exit 1; }
+
+      - run: ./grimaur --git-mirror fetch --force $PKG
+      - run: ./grimaur fetch --force $PKG --git-mirror
+      - run: ./grimaur --git-mirror update --noconfirm
+      - run: ./grimaur inspect $PKG
+      - run: ./grimaur search $PATTERN --no-interactive --limit 5
+
+      - name: Setup builder user
+        run: |
+          useradd -m builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          chown -R builder:builder .
+
+      - name: Install via grimaur (as builder)
+        run: sudo -u builder ./grimaur install $PKG --noconfirm
