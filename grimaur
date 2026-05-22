@@ -14,10 +14,10 @@ missing.
 
 ##  SPDX-License-Identifier: MIT */
 
-Requirements: git, makepkg, pacman, and sudo/doas/run0 or root.
+Requirements: git, makepkg, pacman, and sudo/doas/run0/su or root.
 Elevation preference is read from `PACMAN_AUTH=(...)` in makepkg.conf
 (~/.config/pacman/makepkg.conf, ~/.makepkg.conf, then /etc/makepkg.conf);
-falls back to sudo, doas, run0 in that order.
+falls back to sudo, doas, run0, then su in that order.
 """
 
 import argparse
@@ -25,6 +25,7 @@ import heapq
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -75,6 +76,7 @@ BOLD = "\033[1m"
 GREEN = "\033[32m"
 CYAN = "\033[36m"
 YELLOW = "\033[33m"
+RED = "\033[31m"
 DIM = "\033[2m"
 
 USE_COLOR = False
@@ -84,7 +86,7 @@ USE_SSH = False
 SHALLOW_CLONE = False
 DEBUG = os.environ.get("DEBUG", "").lower() in ("1", "true", "yes")
 _INSTALLED_CACHE: set[str] | None = None
-_ELEV_TOOLS = ("sudo", "doas", "run0")
+_ELEV_TOOLS = ("sudo", "doas", "run0", "su")
 _PACMAN_AUTH_RE = re.compile(r'^\s*PACMAN_AUTH\s*=\s*\(?\s*"?([^"\s)]+)"?')
 
 
@@ -122,9 +124,12 @@ def _get_elev() -> str:
 
 
 def _elevate(cmd: list[str]) -> list[str]:
-	if os.geteuid() != 0:
-		return [_get_elev(), *cmd]
-	return cmd
+	if os.geteuid() == 0:
+		return cmd
+	tool = _get_elev()
+	if tool == "su":
+		return ["su", "-c", shlex.join(cmd), "root"]
+	return [tool, *cmd]
 
 _RPC_FALLBACK_NOTIFIED = False
 
@@ -2113,9 +2118,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 	dest_root = Path(os.path.expanduser(args.dest_root)).resolve()
 	refresh: bool = bool(args.refresh)
-	if args.command is None:
-		parser.print_help()
-		return 0
 
 	global USE_COLOR, USE_AUR_RPC, FORCE_GIT_MIRROR, USE_SSH, SHALLOW_CLONE
 	USE_COLOR = not getattr(args, "no_color", False) and sys.stdout.isatty()
@@ -2123,6 +2125,22 @@ def main(argv: Sequence[str] | None = None) -> int:
 	FORCE_GIT_MIRROR = not USE_AUR_RPC
 	USE_SSH = bool(getattr(args, "use_ssh", False))
 	SHALLOW_CLONE = bool(getattr(args, "shallow", False))
+
+	if os.geteuid() == 0:
+		print(
+			style(
+				"error: do not run grimaur as root. see man makepkg "
+				"pacman elevation is handled auto via PACMAN_AUTH in makepkg.conf "
+				"re-run as a regular user",
+				RED,
+			),
+			file=sys.stderr,
+		)
+		return 1
+
+	if args.command is None:
+		parser.print_help()
+		return 0
 
 	# fallback when /tmp is not writable, use our default + .tmp.
 	current_tmp = os.environ.get("TMPDIR") or "/tmp"
