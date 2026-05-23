@@ -29,7 +29,7 @@ jobs:
         shell: bash
       - run: pacman --noconfirm -Sy archlinux-keyring
         shell: bash
-      - run: pacman --noconfirm -S --needed git python base-devel sudo
+      - run: pacman --noconfirm -S --needed git python base-devel
         shell: bash
 
       - name: Setup builder user
