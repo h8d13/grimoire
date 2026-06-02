@@ -1275,10 +1275,11 @@ def remove_package(
 
 	# Optionally remove cached directory
 	package_dir = dest_root / package
-	if remove_cache and package_dir.exists():
-		print(f"Removing cached directory {package_dir}")
-		shutil.rmtree(package_dir)
-		print(f"Removed cache for {style(package, GREEN)}")
+	if remove_cache:
+		if package_dir.exists():
+			print(f"Removing cached directory {package_dir}")
+			shutil.rmtree(package_dir)
+			print(f"Removed cache for {style(package, GREEN)}")
 		else:
 			print(f"No cache found at {package_dir}")
 
