@@ -1,7 +1,4 @@
-"""Unit tests for --use-ssh URL rewriting + propagation in env var.
-
-Run: python3 -m unittest discover __tests__
-"""
+"""Unit tests for --use-ssh URL rewriting + propagation in env var."""
 
 import os
 import re
