@@ -16,6 +16,10 @@ ignore = [
     "PLW0603",  # global-statement: module-level config flags are intentional (cf. pylint W0603 disable)
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# Tests legitimately shell out to git/pacman with known, fixed argv.
+"tests/**" = ["S603", "S607"]
+
 [tool.ruff.format]
 indent-style = "tab"
 
