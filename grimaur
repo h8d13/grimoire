@@ -9,15 +9,10 @@ makepkg. Official repository dependencies are installed with pacman when they ar
 missing. In a single truth python file.
 
       __...--~~~~~-._   _.-~~~~~--...__
-
     //               `V'               \\
-
    //                 |                 \\
-
   //__...--~~~~~~-._  |  _.-~~~~~~--...__\\
-
  //__.....----~~~~._\ | /_.~~~~----.....__\\
-
 ====================\\|//====================
 
                 grimaur 0.1.2
