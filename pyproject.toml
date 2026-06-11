@@ -9,7 +9,7 @@ line-length = 88
 extend-include = ["grimaur"]
 
 [tool.ruff.lint]
-select = ["E", "F", "B", "I", "UP", "W", "TC", "PERF", "S", "PLW", "SIM", "PTH", "RUF", "FURB"]
+select = ["E", "F", "B", "I", "UP", "W", "TC", "PERF", "S", "PLW", "SIM", "PTH", "RUF", "FURB", "A", "ISC"]
 ignore = [
     "E501",
     "W191",
