@@ -28,6 +28,7 @@ Requirements: git, base-devel, pacman, and sudo/doas/run0/su.
 """
 
 import argparse
+import hashlib
 import heapq
 import json
 import os
@@ -36,6 +37,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 import traceback
 import urllib.error
 import urllib.parse
@@ -47,7 +49,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-	from collections.abc import Iterable, Sequence
+	from collections.abc import Callable, Iterable, Sequence
 
 
 __version__ = "dev"
@@ -82,6 +84,8 @@ FORCE_GIT_MIRROR = False
 USE_SSH = False
 SHALLOW_CLONE = False
 DEBUG = os.environ.get("DEBUG", "").lower() in ("1", "true", "yes")
+CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "grimaur"
+CACHE_TTL = 3600
 _INSTALLED_CACHE: set[str] | None = None
 _ELEV_TOOLS = ("sudo", "doas", "run0", "su")
 _PACMAN_AUTH_RE = re.compile(r'^\s*PACMAN_AUTH\s*=\s*\(?\s*"?([^"\s)]+)"?')
@@ -276,38 +280,84 @@ class UpdateCandidate:
 	local_head: str | None
 
 
+def cache_get(key: str, ttl: int) -> str | None:
+	path = CACHE_DIR / key
+	try:
+		if time.time() - path.stat().st_mtime > ttl:
+			return None
+		return path.read_text()
+	except OSError:
+		return None
+
+
+def cache_put(key: str, payload: str) -> None:
+	path = CACHE_DIR / key
+	try:
+		path.parent.mkdir(parents=True, exist_ok=True)
+		tmp = path.with_name(path.name + ".tmp")
+		tmp.write_text(payload)
+		tmp.replace(path)
+	except OSError:
+		pass
+
+
+def cached_json(key: str, ttl: int, fetch: Callable[[], object]) -> object:
+	payload = cache_get(key, ttl)
+	if payload is not None:
+		try:
+			value = json.loads(payload)
+		except json.JSONDecodeError:
+			value = None
+		if value is not None:
+			if DEBUG:
+				print(f"+ cache hit {key}", file=sys.stderr)
+			return value
+	value = fetch()
+	if value is not None:
+		cache_put(key, json.dumps(value))
+	return value
+
+
 def aur_rpc_call(params: dict[str, str | list[str]]) -> dict[str, object]:
 	query_params: dict[str, str | list[str]] = {"v": "5"}
 	query_params.update(params)
 	query = urllib.parse.urlencode(query_params, doseq=True)
 	url = f"{AUR_RPC_ENDPOINT}?{query}"
-	if DEBUG:
-		print(f"+ GET {url}", file=sys.stderr)
-	try:
-		with urllib.request.urlopen(url, timeout=10) as response:  # noqa: S310 - url built from hardcoded https AUR endpoint
-			status = response.getcode()
-			if status != 200:
-				disable_aur_rpc(f"status {status}")
-				raise AurGitError(f"AUR RPC request failed with status {status}")
-			payload = response.read()
-	except urllib.error.URLError as exc:
-		disable_aur_rpc(str(exc))
-		raise AurGitError(f"Failed to contact AUR RPC: {exc}") from exc
-	except Exception as exc:  # pragma: no cover - unexpected transport issues
-		disable_aur_rpc(str(exc))
-		raise AurGitError(f"Failed to contact AUR RPC: {exc}") from exc
-	try:
-		data = json.loads(payload.decode())
-	except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-		disable_aur_rpc("invalid JSON payload")
-		raise AurGitError("Failed to decode AUR RPC response") from exc
-	if not isinstance(data, dict):
-		raise AurGitError("AUR RPC returned non-dict response")
-	if data.get("type") == "error":
-		error_msg = str(data.get("error") or "Unknown AUR RPC error")
-		disable_aur_rpc(error_msg)
-		raise AurGitError(error_msg)
-	return data
+
+	def fetch() -> dict[str, object]:
+		if DEBUG:
+			print(f"+ GET {url}", file=sys.stderr)
+		try:
+			with urllib.request.urlopen(url, timeout=10) as response:  # noqa: S310 - url built from hardcoded https AUR endpoint
+				status = response.getcode()
+				if status != 200:
+					disable_aur_rpc(f"status {status}")
+					raise AurGitError(f"AUR RPC request failed with status {status}")
+				payload = response.read()
+		except urllib.error.URLError as exc:
+			disable_aur_rpc(str(exc))
+			raise AurGitError(f"Failed to contact AUR RPC: {exc}") from exc
+		except Exception as exc:  # pragma: no cover - unexpected transport issues
+			disable_aur_rpc(str(exc))
+			raise AurGitError(f"Failed to contact AUR RPC: {exc}") from exc
+		try:
+			data = json.loads(payload.decode())
+		except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+			disable_aur_rpc("invalid JSON payload")
+			raise AurGitError("Failed to decode AUR RPC response") from exc
+		if not isinstance(data, dict):
+			raise AurGitError("AUR RPC returned non-dict response")
+		if data.get("type") == "error":
+			error_msg = str(data.get("error") or "Unknown AUR RPC error")
+			disable_aur_rpc(error_msg)
+			raise AurGitError(error_msg)
+		return data
+
+	if params.get("type") != "search":
+		return fetch()
+	cache_key = f"search/{hashlib.sha256(query.encode()).hexdigest()}.json"
+	data = cached_json(cache_key, CACHE_TTL, fetch)
+	return data if isinstance(data, dict) else fetch()
 
 
 @cache
@@ -1521,18 +1571,24 @@ def search_packages_git(
 	# Default to 50 results if no limit specified to avoid fetching metadata for thousands of packages
 	if limit is None:
 		limit = 50
-	output = run_command(
-		["git", "ls-remote", "--heads", get_aur_remote()], capture=True
-	)
+
+	def fetch_names() -> list[str]:
+		output = run_command(
+			["git", "ls-remote", "--heads", get_aur_remote()], capture=True
+		)
+		names: list[str] = []
+		for line in str(output).splitlines():
+			if not line.strip():
+				continue
+			try:
+				_, ref = line.split()
+			except ValueError:
+				continue
+			names.append(ref.split("/")[-1])
+		return names
+
 	candidates: list[tuple[int, str]] = []
-	for line in str(output).splitlines():
-		if not line.strip():
-			continue
-		try:
-			_, ref = line.split()
-		except ValueError:
-			continue
-		package = ref.split("/")[-1]
+	for package in cached_json("packages.json", CACHE_TTL, fetch_names):
 		score = compute_match_score(package, regex=regex, needle=needle)
 		if score is None:
 			continue
@@ -1560,7 +1616,13 @@ def search_packages_git(
 		score, package = score_pkg
 		version = None
 		description = None
-		meta = git_srcinfo_metadata(package)
+		# Cached for search responsiveness; the update flow calls
+		# git_srcinfo_metadata directly so version checks stay live.
+		meta = cached_json(
+			f"srcinfo/{package}.json",
+			CACHE_TTL,
+			lambda: git_srcinfo_metadata(package),
+		)
 		if meta:
 			version, description = meta
 		return SearchResult(
