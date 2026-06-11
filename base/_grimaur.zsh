@@ -12,6 +12,8 @@ _grimaur() {
         '--no-color[Disable colored output]'
         '--aur-rpc[Use AUR RPC API (default)]'
         '--git-mirror[Use git mirror instead of AUR RPC]'
+        '--use-ssh[Use SSH instead of HTTPS for git operations]'
+        '--shallow[Use shallow clones (--depth=1); default is full history]'
     )
 
     _arguments -C \
@@ -31,7 +33,6 @@ _grimaur() {
                 'search:Search packages via the configured backend'
                 'inspect:Show PKGBUILD or dependency information'
                 'list:List installed foreign (AUR) packages'
-                'complete:Shell completion helper'
             )
             _describe -t commands 'grimaur command' commands
             ;;
@@ -41,13 +42,15 @@ _grimaur() {
                     _arguments \
                         $global_opts \
                         '--force[Reclone even if directory exists]' \
-                        '1:package:_grimaur_aur_packages'
+                        '--repo-url[Clone from custom Git URL]:url:' \
+                        '1:package:'
                     ;;
                 install)
                     _arguments \
                         $global_opts \
                         '--noconfirm[Pass --noconfirm to pacman/makepkg]' \
-                        '1:package:_grimaur_aur_packages'
+                        '--repo-url[Clone from custom Git URL]:url:' \
+                        '1:package:'
                     ;;
                 remove)
                     _arguments \
@@ -62,12 +65,15 @@ _grimaur() {
                         '--noconfirm[Pass --noconfirm to pacman/makepkg]' \
                         '--devel[Include VCS/devel packages]' \
                         '--global[Update official repositories with pacman -Syu first]' \
+                        '--system-only[With --global, only update system packages and skip AUR updates]' \
+                        '--index[With --global, only sync package databases (pacman -Sy)]' \
+                        '--download[With --global, download updates without installing (pacman -Syuw)]' \
+                        '--install[With --global, install already-downloaded packages (pacman -Su)]' \
                         '*:packages:_grimaur_foreign_packages'
                     ;;
                 search)
                     _arguments \
                         $global_opts \
-                        '--regex[Treat pattern as regular expression]' \
                         '--limit[Limit results]:number:(10 20 50 100)' \
                         '--no-interactive[Disable interactive selection]' \
                         '--noconfirm[Skip confirmation prompts]' \
@@ -78,32 +84,15 @@ _grimaur() {
                         $global_opts \
                         '--target[Which data to show]:target:(info PKGBUILD SRCINFO)' \
                         '--full[Include make/check/optional dependencies]' \
-                        '1:package:_grimaur_aur_packages'
+                        '--repo-url[Inspect package from custom Git URL]:url:' \
+                        '1:package:'
                     ;;
                 list)
                     _arguments $global_opts
                     ;;
-                complete)
-                    _arguments \
-                        '1:subcommand:(install)' \
-                        '2:prefix:' \
-                        '--limit[Limit number of candidates]:number:(64)'
-                    ;;
             esac
             ;;
     esac
-}
-
-# Helper function to complete AUR package names
-_grimaur_aur_packages() {
-    local -a packages
-    local prefix="$PREFIX"
-    
-    # Only try to complete if we have at least 2 characters
-    if [[ ${#prefix} -ge 2 ]]; then
-        packages=(${(f)"$(grimaur complete install "$prefix" 2>/dev/null)"})
-        _describe -t packages 'AUR package' packages
-    fi
 }
 
 # Helper function to complete installed foreign packages

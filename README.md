@@ -5,39 +5,24 @@
 
 `grimaur` is a lightweight AUR helper that searches, builds, and updates AUR packages. It uses the AUR RPC
 API and **automatically falls back to the official git mirror when the endpoint is unavailable.**
-
 <br clear="left">
-
-> [!TIP]
-> When the AUR is down, run commands with `--git-mirror` 
-
-For example: `grimaur <package> --git-mirror` to bypass the RPC entirely, this ensures higher uptimes.
-
 ## Install
 
 ### Deps
 `sudo pacman -S --needed git base-devel`
 
-### Directly from the AUR
+### From Github/Python directly
    ```bash
-   git clone https://aur.archlinux.org/grimaur-git.git
-   cd grimaur-git
-   makepkg -si
+   git clone https://github.com/mackilanu/grimaur
+   cd grimaur
+   ./grimaur <command> # try --help 
+   # or install globally makepkg -si
    ```
 
-### From the git mirror
-   ```bash
-   git clone --branch grimaur-git --single-branch https://github.com/archlinux/aur.git grimaur-git
-   cd grimaur-git
-   makepkg -si
-   ```
-### From Python directly
-   ```bash
-   git clone https://github.com/ryk4rd/grimaur
-   cd grimaur
-   chmod +x grimaur
-   ./grimaur <command>
-   ```
+>[!TIP]
+> You can use `grimaur fetch <package>` to inspect `PKGBUILD` and source code before manually installing using `makepkg` or similar.
+
+Even see it directly: `python grimaur inspect brave-bin --target PKGBUILD` Also accepts: `SRCINFO`
 
 ## Usage
 ### Search Packages
@@ -45,11 +30,6 @@ For example: `grimaur <package> --git-mirror` to bypass the RPC entirely, this e
    - Regex "pattern-*"` automatically uses git mirror
    - Pass `--git-mirror` when endpoint is down
 - `grimaur list` to see installed "foreign" packages recognized by pacman -Qm
-
->[!NOTE]
-> You can use `grimaur fetch <package>` to inspect `PKGBUILD` and source code before manually installing using `makepkg` or similar.
-
-Even see it directly: `python grimaur inspect brave-bin --target PKGBUILD` Also accepts: `SRCINFO`
 
 ### Inspect & Install & Remove Packages
 
