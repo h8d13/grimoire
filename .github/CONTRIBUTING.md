@@ -18,6 +18,8 @@ Currently, questions, bugs and suggestions should be reported through [GitHub is
 
 ## Coding convention
 
-All rules/exclusions can be consulted in the master `pyproject.toml` file: use `ruff` and `shfmt` or `pre-commit` [file](../.pre-commit-config.yaml).
+All rules/exclusions can be consulted in the master `pyproject.toml` file.
+
+Use `ruff` and `shfmt` or `pre-commit` [file](/.pre-commit-config.yaml).
 
 ---
