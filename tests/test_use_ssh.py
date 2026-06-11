@@ -19,8 +19,7 @@ def _source_urls(pkgbuild: Path) -> list[str]:
 	urls: list[str] = []
 	for raw_token in re.findall(r'["\']([^"\']+)["\']', match.group(1)):
 		token = raw_token.split("::", 1)[1] if "::" in raw_token else raw_token
-		if token.startswith("git+"):
-			token = token[len("git+") :]
+		token = token.removeprefix("git+")
 		urls.append(token)
 	return urls
 

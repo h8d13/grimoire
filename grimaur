@@ -736,7 +736,7 @@ def package_provides(package: str) -> set[str] | None:
 						provides.add(normalized)
 	srcinfo = fetch_git_file(package, ".SRCINFO")
 	if not srcinfo:
-		return provides if provides else None
+		return provides or None
 	for raw_line in srcinfo.splitlines():
 		line = raw_line.strip()
 		if not line or "=" not in line:
@@ -2126,7 +2126,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 				remaining.append(item)
 			i += 1
 		if implicit_search:
-			argv_list = reordered + ["search"] + remaining
+			argv_list = [*reordered, "search", *remaining]
 		elif reordered:
 			argv_list = reordered + remaining
 
