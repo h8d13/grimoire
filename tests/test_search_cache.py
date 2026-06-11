@@ -35,6 +35,11 @@ class CacheHelperTests(unittest.TestCase):
 	def test_miss_when_absent(self):
 		self.assertIsNone(grimaur.cache_get("nope.json", ttl=60))
 
+	def test_disabled_when_cache_dir_unset(self):
+		with mock.patch.object(grimaur, "CACHE_DIR", None):
+			grimaur.cache_put("search/abc.json", '{"ok": 1}')
+			self.assertIsNone(grimaur.cache_get("search/abc.json", ttl=60))
+
 	def test_miss_when_expired(self):
 		grimaur.cache_put("packages.list", "foo\nbar")
 		stale = time.time() - 120

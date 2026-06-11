@@ -82,7 +82,9 @@ FORCE_GIT_MIRROR = False
 USE_SSH = False
 SHALLOW_CLONE = False
 DEBUG = os.environ.get("DEBUG", "").lower() in ("1", "true", "yes")
-CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "grimaur"
+# Set by main() to dest_root/.searchcache (same convention as the .tmp
+# fallback: dest_root works even in chroots where HOME/XDG may not).
+CACHE_DIR: Path | None = None
 CACHE_TTL = 3600
 _INSTALLED_CACHE: set[str] | None = None
 _ELEV_TOOLS = ("sudo", "doas", "run0", "su")
@@ -292,6 +294,8 @@ class UpdateCandidate:
 
 
 def cache_get(key: str, ttl: int) -> str | None:
+	if CACHE_DIR is None:
+		return None
 	path = CACHE_DIR / key
 	try:
 		if time.time() - path.stat().st_mtime > ttl:
@@ -302,6 +306,8 @@ def cache_get(key: str, ttl: int) -> str | None:
 
 
 def cache_put(key: str, payload: str) -> None:
+	if CACHE_DIR is None:
+		return
 	path = CACHE_DIR / key
 	try:
 		path.parent.mkdir(parents=True, exist_ok=True)
@@ -2249,7 +2255,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 	dest_root = Path(args.dest_root).expanduser().resolve()
 	refresh: bool = bool(args.refresh)
 
-	global USE_COLOR, USE_AUR_RPC, FORCE_GIT_MIRROR, USE_SSH, SHALLOW_CLONE
+	global USE_COLOR, USE_AUR_RPC, FORCE_GIT_MIRROR, USE_SSH, SHALLOW_CLONE, CACHE_DIR
+	CACHE_DIR = dest_root / ".searchcache"
 	USE_COLOR = not getattr(args, "no_color", False) and sys.stdout.isatty()
 	USE_AUR_RPC = bool(getattr(args, "aur_rpc", True))
 	FORCE_GIT_MIRROR = not USE_AUR_RPC

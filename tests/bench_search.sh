@@ -5,7 +5,7 @@
 #   firefox -> narrow enough for the AUR RPC (if it is not down), exercises
 #              the cached search/<sha>.json response
 set -eu
-cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/grimaur"
+cache_dir="$HOME/.cache/aurgit/.searchcache"
 grimaur="$(cd "$(dirname "$0")/.." && pwd)/grimaur"
 
 for pattern in python firefox; do
