@@ -10,7 +10,7 @@ _grimaur() {
         '--dest-root[Directory to store cloned packages]:directory:_directories'
         '--refresh[Refresh existing clones before use]'
         '--no-color[Disable colored output]'
-        '--aur-rpc[Use AUR RPC API (default)]'
+        '--aur-rpc[Force AUR RPC; no git-mirror fallback]'
         '--git-mirror[Use git mirror instead of AUR RPC]'
         '--use-ssh[Use SSH instead of HTTPS for git operations]'
         '--shallow[Use shallow clones (--depth=1); default is full history]'

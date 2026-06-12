@@ -79,6 +79,7 @@ DIM = "\033[2m"
 USE_COLOR = False
 USE_AUR_RPC = False
 FORCE_GIT_MIRROR = False
+FORCE_AUR_RPC = False
 USE_SSH = False
 SHALLOW_CLONE = False
 DEBUG = os.environ.get("DEBUG", "").lower() in ("1", "true", "yes")
@@ -214,6 +215,10 @@ def style(text: str, *codes: str) -> str:
 
 def disable_aur_rpc(reason: str) -> None:
 	global USE_AUR_RPC, _RPC_FALLBACK_NOTIFIED
+	if FORCE_AUR_RPC:
+		raise AurRpcForcedError(
+			f"AUR RPC failed and --aur-rpc forbids the git-mirror fallback: {reason}"
+		)
 	if FORCE_GIT_MIRROR or not USE_AUR_RPC:
 		return
 	USE_AUR_RPC = False
@@ -259,6 +264,14 @@ def is_vcs_package(name: str) -> bool:
 
 class AurGitError(RuntimeError):
 	"""Wraps fatal errors coming from the helper."""
+
+
+class AurRpcForcedError(RuntimeError):
+	"""RPC failed under --aur-rpc.
+
+	Deliberately not an AurGitError: callers swallow that as the
+	git-mirror fallback signal, and forced mode must not fall back.
+	"""
 
 
 @dataclass(frozen=True)
@@ -2092,8 +2105,8 @@ def build_parser() -> argparse.ArgumentParser:
 		"--aur-rpc",
 		dest="aur_rpc",
 		action="store_true",
-		default=True,
-		help="Use the AUR RPC API for metadata and dependency resolution (default)",
+		default=None,
+		help="Force the AUR RPC API; fail instead of falling back to the git mirror",
 	)
 	parser.add_argument(
 		"--git-mirror",
@@ -2281,16 +2294,20 @@ def main(argv: Sequence[str] | None = None) -> int:
 	dest_root = Path(args.dest_root).expanduser().resolve()
 	refresh: bool = bool(args.refresh)
 
-	global USE_COLOR, USE_AUR_RPC, FORCE_GIT_MIRROR, USE_SSH, SHALLOW_CLONE
-	global CACHE_DIR, CACHE_TTL
+	global USE_COLOR, USE_AUR_RPC, FORCE_GIT_MIRROR, FORCE_AUR_RPC
+	global USE_SSH, SHALLOW_CLONE, CACHE_DIR, CACHE_TTL
 	CACHE_DIR = dest_root / ".searchcache"
 	if refresh:
 		# --refresh means "give me fresh data": expire every read,
 		# keep writing so the cache ends up repopulated.
 		CACHE_TTL = 0
 	USE_COLOR = not getattr(args, "no_color", False) and sys.stdout.isatty()
-	USE_AUR_RPC = bool(getattr(args, "aur_rpc", True))
-	FORCE_GIT_MIRROR = not USE_AUR_RPC
+	# Backend tri-state: None = auto (RPC, mirror fallback),
+	# True = --aur-rpc (force RPC), False = --git-mirror (force mirror).
+	backend = getattr(args, "aur_rpc", None)
+	USE_AUR_RPC = backend is not False
+	FORCE_GIT_MIRROR = backend is False
+	FORCE_AUR_RPC = backend is True
 	USE_SSH = bool(getattr(args, "use_ssh", False))
 	SHALLOW_CLONE = bool(getattr(args, "shallow", False))
 
@@ -2470,7 +2487,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 			list_installed_packages()
 		else:
 			parser.error("Unknown command")
-	except AurGitError as exc:
+	except (AurGitError, AurRpcForcedError) as exc:
 		print(f"error: {exc}", file=sys.stderr)
 		if DEBUG:
 			import traceback
