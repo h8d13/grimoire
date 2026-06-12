@@ -337,6 +337,14 @@ def cached_json(key: str, ttl: int, fetch: Callable[[], object]) -> object:
 	return value
 
 
+def clear_search_cache() -> None:
+	if CACHE_DIR is None or not CACHE_DIR.exists():
+		print("No search cache to remove")
+		return
+	shutil.rmtree(CACHE_DIR)
+	print(f"Removed search cache {CACHE_DIR}")
+
+
 def aur_rpc_call(params: dict[str, str | list[str]]) -> dict[str, object]:
 	query_params: dict[str, str | list[str]] = {"v": "5"}
 	query_params.update(params)
@@ -1338,7 +1346,7 @@ def remove_package(
 	dest_root: Path,
 	*,
 	noconfirm: bool,
-	remove_cache: bool,
+	remove_clone: bool,
 ) -> None:
 	# Check if package is installed
 	if not is_installed(package):
@@ -1359,15 +1367,15 @@ def remove_package(
 		print(f"Failed to remove package: {exc}", file=sys.stderr)
 		return
 
-	# Optionally remove cached directory
+	# Optionally remove the clone
 	package_dir = dest_root / package
-	if remove_cache:
+	if remove_clone:
 		if package_dir.exists():
-			print(f"Removing cached directory {package_dir}")
+			print(f"Removing clone {package_dir}")
 			shutil.rmtree(package_dir)
-			print(f"Removed cache for {style(package, GREEN)}")
+			print(f"Removed clone for {style(package, GREEN)}")
 		else:
-			print(f"No cache found at {package_dir}")
+			print(f"No clone found at {package_dir}")
 
 
 def get_ignored_packages() -> set[str]:
@@ -2125,14 +2133,19 @@ def build_parser() -> argparse.ArgumentParser:
 	install_parser.add_argument("--repo-url", help="Clone from custom Git URL")
 
 	remove_parser = subparsers.add_parser("remove", help="Remove an installed package")
-	remove_parser.add_argument("package", help="Package name to remove")
+	remove_parser.add_argument("package", nargs="?", help="Package name to remove")
 	remove_parser.add_argument(
 		"--noconfirm", action="store_true", help="Pass --noconfirm to pacman"
 	)
 	remove_parser.add_argument(
-		"--remove-cache",
+		"--clone",
 		action="store_true",
-		help="Also remove the cached clone from dest-root",
+		help="Also remove the package's clone from dest-root",
+	)
+	remove_parser.add_argument(
+		"--cache",
+		action="store_true",
+		help="Remove the search result cache (.searchcache) from dest-root",
 	)
 
 	update_parser = subparsers.add_parser(
@@ -2350,12 +2363,21 @@ def main(argv: Sequence[str] | None = None) -> int:
 				repo_url=repo_url,
 			)
 		elif args.command == "remove":
-			remove_package(
-				args.package,
-				dest_root,
-				noconfirm=args.noconfirm,
-				remove_cache=args.remove_cache,
-			)
+			if args.cache:
+				clear_search_cache()
+			if args.package:
+				remove_package(
+					args.package,
+					dest_root,
+					noconfirm=args.noconfirm,
+					remove_clone=args.clone,
+				)
+			elif not args.cache:
+				print(
+					"error: nothing to remove (specify a package or --cache)",
+					file=sys.stderr,
+				)
+				return 2
 		elif args.command == "update":
 			update_packages(
 				dest_root,

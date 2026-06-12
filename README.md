@@ -38,7 +38,8 @@ Even see it directly: `python grimaur inspect brave-bin --target PKGBUILD` Also 
    - Pass `--git-mirror` to skip AUR RPC
    - Pass `--use-ssh` use SSH instead of HTTPS
 - `grimaur remove <package>` to uninstall from pacman
-   - Pass `--remove-cache` to delete cached files too
+   - Pass `--clone` to delete the package's clone too
+   - `grimaur remove --cache` drops the search result cache
 -  `grimaur install/fetch/inspect mypkg --repo-url <url>` to use custom URL instead
 
 ### Stay Updated

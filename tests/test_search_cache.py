@@ -46,6 +46,16 @@ class CacheHelperTests(unittest.TestCase):
 		os.utime(grimaur.CACHE_DIR / "packages.list", (stale, stale))
 		self.assertIsNone(grimaur.cache_get("packages.list", ttl=60))
 
+	def test_clear_search_cache_removes_dir(self):
+		# subdir, so the enclosing TemporaryDirectory survives the rmtree
+		sub = grimaur.CACHE_DIR / ".searchcache"
+		with mock.patch.object(grimaur, "CACHE_DIR", sub):
+			grimaur.cache_put("search/abc.json", '{"ok": 1}')
+			grimaur.clear_search_cache()
+			self.assertFalse(sub.exists())
+			# idempotent when already gone
+			grimaur.clear_search_cache()
+
 	def test_expired_entry_is_pruned(self):
 		grimaur.cache_put("packages.list", "foo\nbar")
 		path = grimaur.CACHE_DIR / "packages.list"
