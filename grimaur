@@ -53,24 +53,6 @@ if TYPE_CHECKING:
 __version__ = "dev"
 
 
-CGIT_RAW_BASE = "https://aur.archlinux.org/cgit/aur.git/plain"
-AUR_RPC_ENDPOINT = "https://aur.archlinux.org/rpc/"
-GITHUB_RAW_BASE = "https://raw.githubusercontent.com/archlinux/aur"
-_VCS_SUFFIXES = ("-git", "-vcs", "-svn", "-hg", "-bzr", "-darcs", "-cvs")
-_COMMON_AUR_SUFFIXES = ("-bin",)
-
-
-# Map of hosts to the SSH user used by their git endpoint.
-# --use-ssh rewrites https://<host>/<path> -> ssh://<user>@<host>/<path>(.git)
-# Useful for --repo-url too, when the URL host is in this map.
-SSH_REWRITE_HOSTS = {
-	"github.com": "git",
-	"gitlab.com": "git",
-	"codeberg.org": "git",
-	"aur.archlinux.org": "aur",
-}
-
-
 RESET = "\033[0m"
 BOLD = "\033[1m"
 GREEN = "\033[32m"
@@ -80,6 +62,14 @@ RED = "\033[31m"
 DIM = "\033[2m"
 
 USE_COLOR = False
+
+
+CGIT_RAW_BASE = "https://aur.archlinux.org/cgit/aur.git/plain"
+AUR_RPC_ENDPOINT = "https://aur.archlinux.org/rpc/"
+GITHUB_RAW_BASE = "https://raw.githubusercontent.com/archlinux/aur"
+_VCS_SUFFIXES = ("-git", "-vcs", "-svn", "-hg", "-bzr", "-darcs", "-cvs")
+_COMMON_AUR_SUFFIXES = ("-bin",)
+
 USE_AUR_RPC = False
 FORCE_GIT_MIRROR = False
 FORCE_AUR_RPC = False
@@ -122,6 +112,16 @@ _GLOBAL_FLAG_OPTIONS = {
 	"--use-ssh",
 	"--shallow",
 	"--version",
+}
+
+# Map of hosts to the SSH user used by their git endpoint.
+# --use-ssh rewrites https://<host>/<path> -> ssh://<user>@<host>/<path>(.git)
+# Useful for --repo-url too, when the URL host is in this map.
+SSH_REWRITE_HOSTS = {
+	"github.com": "git",
+	"gitlab.com": "git",
+	"codeberg.org": "git",
+	"aur.archlinux.org": "aur",
 }
 
 
