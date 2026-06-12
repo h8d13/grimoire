@@ -53,16 +53,6 @@ if TYPE_CHECKING:
 __version__ = "dev"
 
 
-def get_aur_remote() -> str:
-	url = "https://github.com/archlinux/aur.git"
-	return _maybe_ssh_rewrite(url) if USE_SSH else url
-
-
-def get_official_aur_git_base() -> str:
-	url = "https://aur.archlinux.org"
-	return _maybe_ssh_rewrite(url) if USE_SSH else url
-
-
 CGIT_RAW_BASE = "https://aur.archlinux.org/cgit/aur.git/plain"
 AUR_RPC_ENDPOINT = "https://aur.archlinux.org/rpc/"
 GITHUB_RAW_BASE = "https://raw.githubusercontent.com/archlinux/aur"
@@ -104,6 +94,8 @@ CACHE_TTL = 3600
 
 _INSTALLED_CACHE: set[str] | None = None
 _ELEV_TOOLS = ("sudo", "doas", "run0", "su")
+_GLOBAL_VALUE_OPTIONS = {"--dest-root"}
+_RPC_FALLBACK_NOTIFIED = False
 
 
 _PACMAN_AUTH_RE = re.compile(r'^\s*PACMAN_AUTH\s*=\s*\(?\s*"?([^"\s)]+)"?')
@@ -133,8 +125,14 @@ _GLOBAL_FLAG_OPTIONS = {
 }
 
 
-_GLOBAL_VALUE_OPTIONS = {"--dest-root"}
-_RPC_FALLBACK_NOTIFIED = False
+def get_aur_remote() -> str:
+	url = "https://github.com/archlinux/aur.git"
+	return _maybe_ssh_rewrite(url) if USE_SSH else url
+
+
+def get_official_aur_git_base() -> str:
+	url = "https://aur.archlinux.org"
+	return _maybe_ssh_rewrite(url) if USE_SSH else url
 
 
 def _makepkg_conf_paths() -> tuple[Path, ...]:
