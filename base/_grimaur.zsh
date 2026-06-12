@@ -14,6 +14,7 @@ _grimaur() {
         '--git-mirror[Use git mirror instead of AUR RPC]'
         '--use-ssh[Use SSH instead of HTTPS for git operations]'
         '--shallow[Use shallow clones (--depth=1); default is full history]'
+        '--version[Show version]'
     )
 
     _arguments -C \
@@ -56,8 +57,9 @@ _grimaur() {
                     _arguments \
                         $global_opts \
                         '--noconfirm[Pass --noconfirm to pacman]' \
-                        '--remove-cache[Also remove the cached clone]' \
-                        '1:package:_grimaur_foreign_packages'
+                        "--clone[Also remove the package's clone]" \
+                        '--cache[Remove the search result cache]' \
+                        '1::package:_grimaur_foreign_packages'
                     ;;
                 update)
                     _arguments \

@@ -12,7 +12,7 @@ _grimaur_completion()
     fi
     
     # Global options (can appear anywhere before subcommand)
-    local global_opts="--dest-root --refresh --no-color --aur-rpc --git-mirror --use-ssh --shallow"
+    local global_opts="--dest-root --refresh --no-color --aur-rpc --git-mirror --use-ssh --shallow --version"
     
     # Find the subcommand (first non-option word after potential global options)
     local subcmd=""
@@ -43,7 +43,7 @@ _grimaur_completion()
                 opts="$global_opts --noconfirm --repo-url"
                 ;;
             remove)
-                opts="$global_opts --noconfirm --remove-cache"
+                opts="$global_opts --noconfirm --clone --cache"
                 ;;
             update)
                 opts="$global_opts --noconfirm --devel --global --system-only --index --download --install"

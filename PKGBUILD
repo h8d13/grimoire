@@ -1,5 +1,5 @@
 pkgname=grimaur-git
-pkgver=r214.g0689904
+pkgver=r216.g17893eb
 pkgrel=1
 pkgdesc="Lightweight AUR helper that uses the official AUR git mirror"
 arch=('any')
