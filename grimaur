@@ -67,6 +67,19 @@ CGIT_RAW_BASE = "https://aur.archlinux.org/cgit/aur.git/plain"
 AUR_RPC_ENDPOINT = "https://aur.archlinux.org/rpc/"
 GITHUB_RAW_BASE = "https://raw.githubusercontent.com/archlinux/aur"
 _VCS_SUFFIXES = ("-git", "-vcs", "-svn", "-hg", "-bzr", "-darcs", "-cvs")
+_COMMON_AUR_SUFFIXES = ("-bin",)
+
+
+# Map of hosts to the SSH user used by their git endpoint.
+# --use-ssh rewrites https://<host>/<path> -> ssh://<user>@<host>/<path>(.git)
+# Useful for --repo-url too, when the URL host is in this map.
+SSH_REWRITE_HOSTS = {
+	"github.com": "git",
+	"gitlab.com": "git",
+	"codeberg.org": "git",
+	"aur.archlinux.org": "aur",
+}
+
 
 RESET = "\033[0m"
 BOLD = "\033[1m"
@@ -87,10 +100,41 @@ DEBUG = os.environ.get("DEBUG", "").lower() in ("1", "true", "yes")
 # fallback: dest_root works even in chroots where HOME/XDG may not).
 CACHE_DIR: Path | None = None
 CACHE_TTL = 3600
+
+
 _INSTALLED_CACHE: set[str] | None = None
 _ELEV_TOOLS = ("sudo", "doas", "run0", "su")
+
+
 _PACMAN_AUTH_RE = re.compile(r'^\s*PACMAN_AUTH\s*=\s*\(?\s*"?([^"\s)]+)"?')
 _PACMAN_DBPATH_RE = re.compile(r"^\s*DBPath\s*=\s*(\S+)")
+_DEP_SPLIT_RE = re.compile(r"[<>~=]+")
+
+
+_SRCINFO_KEYS = {
+	"depends",
+	"makedepends",
+	"checkdepends",
+	"optdepends",
+	"pkgname",
+	"pkgbase",
+	"pkgdesc",
+}
+
+
+_GLOBAL_FLAG_OPTIONS = {
+	"--refresh",
+	"--no-color",
+	"--aur-rpc",
+	"--git-mirror",
+	"--use-ssh",
+	"--shallow",
+	"--version",
+}
+
+
+_GLOBAL_VALUE_OPTIONS = {"--dest-root"}
+_RPC_FALLBACK_NOTIFIED = False
 
 
 def _makepkg_conf_paths() -> tuple[Path, ...]:
@@ -147,21 +191,6 @@ def _elevate(cmd: list[str]) -> list[str]:
 	return [tool, *cmd]
 
 
-_RPC_FALLBACK_NOTIFIED = False
-
-_COMMON_AUR_SUFFIXES = ("-bin",)
-
-# Map of hosts to the SSH user used by their git endpoint.
-# --use-ssh rewrites https://<host>/<path> -> ssh://<user>@<host>/<path>(.git)
-# Useful for --repo-url too, when the URL host is in this map.
-SSH_REWRITE_HOSTS = {
-	"github.com": "git",
-	"gitlab.com": "git",
-	"codeberg.org": "git",
-	"aur.archlinux.org": "aur",
-}
-
-
 def _maybe_ssh_rewrite(url: str) -> str:
 	parsed = urllib.parse.urlparse(url)
 	if parsed.scheme not in ("http", "https"):
@@ -193,18 +222,6 @@ def _ssh_rewrite_git_env() -> dict[str, str]:
 		env[f"GIT_CONFIG_KEY_{i}"] = key
 		env[f"GIT_CONFIG_VALUE_{i}"] = value
 	return env
-
-
-_GLOBAL_FLAG_OPTIONS = {
-	"--refresh",
-	"--no-color",
-	"--aur-rpc",
-	"--git-mirror",
-	"--use-ssh",
-	"--shallow",
-	"--version",
-}
-_GLOBAL_VALUE_OPTIONS = {"--dest-root"}
 
 
 def style(text: str, *codes: str) -> str:
@@ -592,17 +609,6 @@ def read_srcinfo(package_dir: Path) -> str:
 	return str(output)
 
 
-_SRCINFO_KEYS = {
-	"depends",
-	"makedepends",
-	"checkdepends",
-	"optdepends",
-	"pkgname",
-	"pkgbase",
-	"pkgdesc",
-}
-
-
 def parse_dependencies(srcinfo_content: str) -> tuple[str, str | None, DependencySet]:
 	pkgbase = ""
 	pkgdesc = None
@@ -643,9 +649,6 @@ def parse_dependencies(srcinfo_content: str) -> tuple[str, str | None, Dependenc
 		pkgdesc,
 		DependencySet(depends, makedepends, checkdepends, optdepends),
 	)
-
-
-_DEP_SPLIT_RE = re.compile(r"[<>~=]+")
 
 
 def _normalize_dep(dep_entry: str) -> str:
