@@ -6,7 +6,9 @@ set -l commands fetch install remove update search inspect list
 # Complete AUR names from the cache grimaur writes alongside packages.json;
 # seed it in the background on first use.
 function __grimaur_aur_packages
-    set -l cache ~/.cache/aurgit/completion.cache
+    set -l cache_home $XDG_CACHE_HOME
+    test -n "$cache_home"; or set cache_home ~/.cache
+    set -l cache $cache_home/grimaur/completion.cache
     if test -r $cache
         grep -- "^"(commandline -ct) $cache 2>/dev/null | head -200
     else

@@ -111,7 +111,7 @@ _grimaur_foreign_packages() {
 # Complete AUR names from the cache grimaur writes alongside packages.json;
 # prefix-grep instead of _describe: the full list is ~115k entries.
 _grimaur_aur_packages() {
-    local cache="$HOME/.cache/aurgit/completion.cache"
+    local cache="${XDG_CACHE_HOME:-$HOME/.cache}/grimaur/completion.cache"
     if [[ -r "$cache" ]]; then
         local -a packages
         packages=(${(f)"$(grep -- "^${PREFIX}" "$cache" 2>/dev/null | head -200)"})

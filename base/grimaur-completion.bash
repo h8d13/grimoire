@@ -97,7 +97,7 @@ _grimaur_completion()
         install|fetch|inspect|search)
             # Complete AUR names from the cache grimaur writes alongside
             # packages.json; seed it in the background on first use.
-            local cache="$HOME/.cache/aurgit/completion.cache"
+            local cache="${XDG_CACHE_HOME:-$HOME/.cache}/grimaur/completion.cache"
             if [[ -r "$cache" ]]; then
                 mapfile -t COMPREPLY < <(grep -- "^$cur" "$cache" 2>/dev/null | head -200)
             else

@@ -2281,10 +2281,12 @@ def build_parser() -> argparse.ArgumentParser:
 		version=f"grimaur {__version__}",
 		help="Show version and exit",
 	)
+	default_dest = str(Path(os.environ.get("XDG_CACHE_HOME", "~/.cache")) / "grimaur")
 	parser.add_argument(
 		"--dest-root",
-		default="~/.cache/aurgit",
-		help="Directory to store cloned packages (default: ~/.cache/aurgit)",
+		default=default_dest,
+		help="Directory to store cloned packages "
+		"(default: $XDG_CACHE_HOME/grimaur or ~/.cache/grimaur)",
 	)
 	parser.add_argument(
 		"--refresh", action="store_true", help="Refresh existing clones before use"
