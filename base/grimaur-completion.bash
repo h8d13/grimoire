@@ -55,7 +55,7 @@ _grimaur_completion()
                 opts="$global_opts --target --full --repo-url --plain"
                 ;;
             list)
-                opts="$global_opts"
+                opts="$global_opts --aur"
                 ;;
             "")
                 # No subcommand yet, only show global options
@@ -94,8 +94,18 @@ _grimaur_completion()
             packages=$(pacman -Qmq 2>/dev/null)
             mapfile -t COMPREPLY < <(compgen -W "$packages" -- "$cur")
             ;;
+        install|fetch|inspect)
+            # Complete AUR names from the cache grimaur writes alongside
+            # packages.json; seed it in the background on first use.
+            local cache="$HOME/.cache/aurgit/completion.cache"
+            if [[ -r "$cache" ]]; then
+                mapfile -t COMPREPLY < <(grep -- "^$cur" "$cache" 2>/dev/null | head -200)
+            else
+                (grimaur list --aur >/dev/null 2>&1 &)
+            fi
+            ;;
         *)
-            # install/fetch/inspect: AUR name is typed in full; search/list: no positional completion
+            # search/list: no positional completion
             ;;
     esac
 }

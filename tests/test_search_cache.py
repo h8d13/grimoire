@@ -1,4 +1,6 @@
+import contextlib
 import hashlib
+import io
 import json
 import os
 import tempfile
@@ -138,6 +140,60 @@ class RpcSearchCacheTests(unittest.TestCase):
 		urlopen.assert_called_once()
 
 
+class NameSourceSelectionTests(unittest.TestCase):
+	def test_gz_primary_skips_git(self):
+		with (
+			mock.patch.object(grimaur, "_fetch_names_gz", return_value=["foo"]) as gz,
+			mock.patch.object(grimaur, "_fetch_names_git") as git,
+		):
+			self.assertEqual(grimaur._fetch_aur_package_names(), ["foo"])
+		gz.assert_called_once()
+		git.assert_not_called()
+
+	def test_gz_failure_falls_back_to_git(self):
+		stderr = io.StringIO()
+		with (
+			mock.patch.object(grimaur, "_fetch_names_gz", return_value=None),
+			mock.patch.object(grimaur, "_fetch_names_git", return_value=["bar"]) as git,
+			contextlib.redirect_stderr(stderr),
+		):
+			self.assertEqual(grimaur._fetch_aur_package_names(), ["bar"])
+		git.assert_called_once()
+		self.assertIn("git mirror", stderr.getvalue())
+
+	def test_force_git_mirror_skips_gz(self):
+		with (
+			mock.patch.object(grimaur, "FORCE_GIT_MIRROR", True),
+			mock.patch.object(grimaur, "_fetch_names_gz") as gz,
+			mock.patch.object(grimaur, "_fetch_names_git", return_value=["baz"]),
+		):
+			self.assertEqual(grimaur._fetch_aur_package_names(), ["baz"])
+		gz.assert_not_called()
+
+	def test_fresh_names_write_completion_cache(self):
+		tmp = tempfile.TemporaryDirectory()
+		self.addCleanup(tmp.cleanup)
+		# completion.cache lands in dest_root, sibling of .searchcache
+		with (
+			mock.patch.object(grimaur, "CACHE_DIR", Path(tmp.name) / ".searchcache"),
+			mock.patch.object(grimaur, "_fetch_names_gz", return_value=["foo", "bar"]),
+		):
+			grimaur._fetch_aur_package_names_with_completion()
+		self.assertEqual(
+			(Path(tmp.name) / "completion.cache").read_text(), "foo\nbar\n"
+		)
+
+	def test_forced_rpc_raises_instead_of_git_fallback(self):
+		with (
+			mock.patch.object(grimaur, "FORCE_AUR_RPC", True),
+			mock.patch.object(grimaur, "_fetch_names_gz", return_value=None),
+			mock.patch.object(grimaur, "_fetch_names_git") as git,
+			self.assertRaises(grimaur.AurRpcForcedError),
+		):
+			grimaur._fetch_aur_package_names()
+		git.assert_not_called()
+
+
 class GitSearchCacheTests(unittest.TestCase):
 	def setUp(self):
 		tmp = tempfile.TemporaryDirectory()
@@ -145,6 +201,8 @@ class GitSearchCacheTests(unittest.TestCase):
 		self.cache_dir = Path(tmp.name)
 		for target, value in (
 			("CACHE_DIR", self.cache_dir),
+			# pin the git path so the packages.gz fetch never hits the network
+			("FORCE_GIT_MIRROR", True),
 			("get_aur_remote", mock.Mock(return_value="https://aur.example")),
 			("installed_package_set", mock.Mock(return_value=set())),
 		):

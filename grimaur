@@ -319,10 +319,7 @@ def cache_get(key: str, ttl: int) -> str | None:
 		return None
 
 
-def cache_put(key: str, payload: str) -> None:
-	if CACHE_DIR is None:
-		return
-	path = CACHE_DIR / key
+def _atomic_write(path: Path, payload: str) -> None:
 	try:
 		path.parent.mkdir(parents=True, exist_ok=True)
 		# pid-unique tmp so concurrent processes never interleave writes
@@ -331,6 +328,20 @@ def cache_put(key: str, payload: str) -> None:
 		tmp.replace(path)
 	except OSError:
 		pass
+
+
+def cache_put(key: str, payload: str) -> None:
+	if CACHE_DIR is None:
+		return
+	_atomic_write(CACHE_DIR / key, payload)
+
+
+def _completion_cache_path() -> Path | None:
+	if CACHE_DIR is None:
+		return None
+	# Conventional yay-style location: dest_root/completion.cache,
+	# sibling of .searchcache rather than inside it.
+	return CACHE_DIR.parent / "completion.cache"
 
 
 def cached_json(key: str, ttl: int, fetch: Callable[[], object]) -> object:
@@ -351,11 +362,18 @@ def cached_json(key: str, ttl: int, fetch: Callable[[], object]) -> object:
 
 
 def clear_search_cache() -> None:
-	if CACHE_DIR is None or not CACHE_DIR.exists():
+	removed = False
+	if CACHE_DIR is not None and CACHE_DIR.exists():
+		shutil.rmtree(CACHE_DIR)
+		print(f"Removed search cache {CACHE_DIR}")
+		removed = True
+	completion = _completion_cache_path()
+	if completion is not None and completion.exists():
+		completion.unlink()
+		print(f"Removed completion cache {completion}")
+		removed = True
+	if not removed:
 		print("No search cache to remove")
-		return
-	shutil.rmtree(CACHE_DIR)
-	print(f"Removed search cache {CACHE_DIR}")
 
 
 def aur_rpc_call(params: dict[str, str | list[str]]) -> dict[str, object]:
@@ -1094,6 +1112,27 @@ def list_installed_packages() -> None:
 		print(f"  {style(name, BOLD)} {style(version, GREEN)}")
 
 
+def list_aur_packages() -> None:
+	# yay/paru -Sl aur shape: "aur <name> unknown-version [installed]".
+	# The AUR exposes no bulk version data, hence the literal placeholder.
+	names = aur_package_names()
+	if not names:
+		raise AurGitError("Could not fetch the AUR package list")
+	installed = installed_package_set()
+	lines: list[str] = []
+	for name in names:
+		line = f"aur {name} unknown-version"
+		if name in installed:
+			line += " [installed]"
+		lines.append(line)
+	try:
+		sys.stdout.write("\n".join(lines) + "\n")
+	except BrokenPipeError:
+		# Reader (e.g. `| head`) closed the pipe; mute the fd so the
+		# interpreter's exit flush does not raise a second time.
+		os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+
+
 def fetch_git_file(package: str, path: str) -> str | None:
 	# Lazy import: pulls in http.client and is unused on a warm cache hit.
 	import urllib.request
@@ -1624,6 +1663,81 @@ def search_packages(
 	)
 
 
+def _fetch_names_gz() -> list[str] | None:
+	# Lazy imports: only paid on a cold packages.json cache.
+	import gzip
+	import urllib.request
+
+	url = "https://aur.archlinux.org/packages.gz"
+	if DEBUG:
+		print(f"+ GET {url}", file=sys.stderr)
+	try:
+		with urllib.request.urlopen(url, timeout=10) as response:  # noqa: S310 - hardcoded https AUR endpoint
+			raw = response.read()
+		names = [
+			line
+			for line in gzip.decompress(raw).decode().splitlines()
+			if line and not line.startswith("#")
+		]
+	except (OSError, ValueError) as exc:
+		if DEBUG:
+			print(f"+ packages.gz failed: {exc}", file=sys.stderr)
+		return None
+	return names or None
+
+
+def _fetch_names_git() -> list[str] | None:
+	output = run_command(
+		["git", "ls-remote", "--heads", get_aur_remote()], capture=True
+	)
+	names: list[str] = []
+	for line in str(output).splitlines():
+		if not line.strip():
+			continue
+		try:
+			_, ref = line.split()
+		except ValueError:
+			continue
+		names.append(ref.split("/")[-1])
+	return names or None
+
+
+def _fetch_aur_package_names() -> list[str] | None:
+	# packages.gz is the canonical list: live packages only (ls-remote also
+	# returns ~50k branches of deleted packages), includes split pkgnames,
+	# ~8x faster and ~20x smaller. The mirror stays as the AUR-down fallback.
+	if FORCE_GIT_MIRROR:
+		return _fetch_names_git()
+	names = _fetch_names_gz()
+	if names:
+		return names
+	if FORCE_AUR_RPC:
+		raise AurRpcForcedError(
+			"packages.gz failed and --aur-rpc forbids the git-mirror fallback"
+		)
+	print("AUR packages.gz unavailable; using git mirror list...", file=sys.stderr)
+	return _fetch_names_git()
+
+
+def _fetch_aur_package_names_with_completion() -> list[str] | None:
+	names = _fetch_aur_package_names()
+	if names:
+		# Plain-text list for the shell completions (newline list greps
+		# fast; JSON does not), at the conventional dest_root location.
+		path = _completion_cache_path()
+		if path is not None:
+			_atomic_write(path, "\n".join(names) + "\n")
+	return names
+
+
+def aur_package_names() -> list[str]:
+	# None on empty/failed fetch so a transient hiccup is never cached for an hour
+	names = cached_json(
+		"packages.json", CACHE_TTL, _fetch_aur_package_names_with_completion
+	)
+	return names if isinstance(names, list) else []
+
+
 def search_packages_git(
 	*,
 	regex: re.Pattern[str] | None,
@@ -1634,27 +1748,8 @@ def search_packages_git(
 	if limit is None:
 		limit = 50
 
-	def fetch_names() -> list[str] | None:
-		output = run_command(
-			["git", "ls-remote", "--heads", get_aur_remote()], capture=True
-		)
-		names: list[str] = []
-		for line in str(output).splitlines():
-			if not line.strip():
-				continue
-			try:
-				_, ref = line.split()
-			except ValueError:
-				continue
-			names.append(ref.split("/")[-1])
-		# None on empty so a transient mirror hiccup is never cached for an hour
-		return names or None
-
-	names = cached_json("packages.json", CACHE_TTL, fetch_names)
-	if not isinstance(names, list):
-		names = []
 	candidates: list[tuple[int, str]] = []
-	for package in names:
+	for package in aur_package_names():
 		score = compute_match_score(package, regex=regex, needle=needle)
 		if score is None:
 			continue
@@ -2350,7 +2445,14 @@ def build_parser() -> argparse.ArgumentParser:
 		action="store_true",
 		help="pacman -Si style 'Key : Value' output for scripting (info target only)",
 	)
-	subparsers.add_parser("list", help="List installed foreign (AUR) packages")
+	list_parser = subparsers.add_parser(
+		"list", help="List installed foreign (AUR) packages"
+	)
+	list_parser.add_argument(
+		"--aur",
+		action="store_true",
+		help="List every AUR package instead (like yay/paru -Sl aur)",
+	)
 
 	return parser
 
@@ -2599,7 +2701,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 				plain=args.plain,
 			)
 		elif args.command == "list":
-			list_installed_packages()
+			if args.aur:
+				list_aur_packages()
+			else:
+				list_installed_packages()
 		else:
 			parser.error("Unknown command")
 	except (AurGitError, AurRpcForcedError) as exc:

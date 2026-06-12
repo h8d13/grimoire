@@ -1,16 +1,17 @@
 pkgname=grimaur-git
-pkgver=r205.gbc41f9a
+pkgver=r214.g0689904
 pkgrel=1
 pkgdesc="Lightweight AUR helper that uses the official AUR git mirror"
 arch=('any')
 url="https://github.com/mackilanu/grimaur"
-dev_url="https://github.com/h8d13/grimaur3"
+_dev_url="https://github.com/h8d13/grimaur3"
+_dev_branch="dot-cache"
 
 license=('MIT')
 depends=('python' 'git')
 provides=('grimaur')
 conflicts=('grimaur')
-source=("$pkgname::git+$dev_url.git")
+source=("$pkgname::git+$_dev_url.git#branch=$_dev_branch")
 sha256sums=('SKIP')
 
 pkgver() {

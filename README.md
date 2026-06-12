@@ -64,6 +64,8 @@ Even see it directly: `python grimaur inspect brave-bin --target PKGBUILD` Also 
    - `grimaur search <term> --no-interactive` lists results without prompting to install
    - `grimaur search <term> --plain` pacman `-Ss` style two-line output for scripting (best match first)
    - `grimaur inspect <pkg> --plain` pacman `-Si` style `Key : Value` output for scripting
+   - `grimaur list --aur` lists every AUR package, like yay/paru `-Sl aur`
+   - Shell completions tab-complete AUR names for install/fetch/inspect from `completion.cache` in dest-root (seeded on first search/list)
 - Force `grimaur fetch <package> --force` reclones even if the directory exists
 - Complete example: `python grimaur --use-ssh search "brave.*-bin" --no-interactive`
 

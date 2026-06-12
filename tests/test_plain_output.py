@@ -1,6 +1,7 @@
 import contextlib
 import io
 import unittest
+import unittest.mock
 
 from grimaurshim import grimaur
 
@@ -96,6 +97,32 @@ class SrcinfoInfoFieldTests(unittest.TestCase):
 		self.assertEqual(fields["URL"], "https://brave.com")
 		self.assertEqual(fields["Depends On"], "gtk3  nss")
 		self.assertEqual(fields["Conflicts With"], "brave")
+
+
+class ListAurTests(unittest.TestCase):
+	def test_sl_aur_shape(self):
+		out = io.StringIO()
+		with (
+			unittest.mock.patch.object(
+				grimaur, "aur_package_names", return_value=["foo", "bar"]
+			),
+			unittest.mock.patch.object(
+				grimaur, "installed_package_set", return_value={"bar"}
+			),
+			contextlib.redirect_stdout(out),
+		):
+			grimaur.list_aur_packages()
+		self.assertEqual(
+			out.getvalue(),
+			"aur foo unknown-version\naur bar unknown-version [installed]\n",
+		)
+
+	def test_empty_name_list_is_an_error(self):
+		with (
+			unittest.mock.patch.object(grimaur, "aur_package_names", return_value=[]),
+			self.assertRaises(grimaur.AurGitError),
+		):
+			grimaur.list_aur_packages()
 
 
 class PrintInfoFieldsTests(unittest.TestCase):

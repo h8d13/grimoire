@@ -16,3 +16,12 @@ for pattern in python firefox; do
 	echo "== $pattern: warm =="
 	time python "$grimaur" search "$pattern" --no-interactive >/dev/null
 done
+
+# list --aur isolates the packages.json path: no srcinfo or RPC involved,
+# so cold-vs-warm here measures the name-list fetch+cache alone.
+echo "== list --aur: cold (cache cleared) =="
+rm -rf "$cache_dir"
+time python "$grimaur" list --aur >/dev/null
+
+echo "== list --aur: warm =="
+time python "$grimaur" list --aur >/dev/null

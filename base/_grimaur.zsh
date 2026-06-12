@@ -43,14 +43,14 @@ _grimaur() {
                         $global_opts \
                         '--force[Reclone even if directory exists]' \
                         '--repo-url[Clone from custom Git URL]:url:' \
-                        '1:package:'
+                        '1:package:_grimaur_aur_packages'
                     ;;
                 install)
                     _arguments \
                         $global_opts \
                         '--noconfirm[Pass --noconfirm to pacman/makepkg]' \
                         '--repo-url[Clone from custom Git URL]:url:' \
-                        '1:package:'
+                        '1:package:_grimaur_aur_packages'
                     ;;
                 remove)
                     _arguments \
@@ -87,10 +87,12 @@ _grimaur() {
                         '--full[Include make/check/optional dependencies]' \
                         '--repo-url[Inspect package from custom Git URL]:url:' \
                         '--plain[pacman -Si style output for scripting]' \
-                        '1:package:'
+                        '1:package:_grimaur_aur_packages'
                     ;;
                 list)
-                    _arguments $global_opts
+                    _arguments \
+                        $global_opts \
+                        '--aur[List every AUR package (like -Sl aur)]'
                     ;;
             esac
             ;;
@@ -102,6 +104,19 @@ _grimaur_foreign_packages() {
     local -a packages
     packages=(${(f)"$(pacman -Qmq 2>/dev/null)"})
     _describe -t packages 'installed package' packages
+}
+
+# Complete AUR names from the cache grimaur writes alongside packages.json;
+# prefix-grep instead of _describe: the full list is ~115k entries.
+_grimaur_aur_packages() {
+    local cache="$HOME/.cache/aurgit/completion.cache"
+    if [[ -r "$cache" ]]; then
+        local -a packages
+        packages=(${(f)"$(grep -- "^${PREFIX}" "$cache" 2>/dev/null | head -200)"})
+        compadd -a packages
+    else
+        (grimaur list --aur >/dev/null 2>&1 &)
+    fi
 }
 
 _grimaur "$@"
