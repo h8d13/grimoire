@@ -94,7 +94,7 @@ _grimaur_completion()
             packages=$(pacman -Qmq 2>/dev/null)
             mapfile -t COMPREPLY < <(compgen -W "$packages" -- "$cur")
             ;;
-        install|fetch|inspect)
+        install|fetch|inspect|search)
             # Complete AUR names from the cache grimaur writes alongside
             # packages.json; seed it in the background on first use.
             local cache="$HOME/.cache/aurgit/completion.cache"
@@ -105,7 +105,7 @@ _grimaur_completion()
             fi
             ;;
         *)
-            # search/list: no positional completion
+            # list: no positional completion
             ;;
     esac
 }

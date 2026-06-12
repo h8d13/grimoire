@@ -78,7 +78,7 @@ _grimaur() {
                         '--no-interactive[Disable interactive selection]' \
                         '--noconfirm[Skip confirmation prompts]' \
                         '--plain[pacman -Ss style output for scripting]' \
-                        '1:pattern:'
+                        '1:pattern:_grimaur_aur_packages'
                     ;;
                 inspect)
                     _arguments \
