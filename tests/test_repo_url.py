@@ -138,6 +138,56 @@ class ResolveBuildDirTests(unittest.TestCase):
 			grimaur._resolve_build_dir(self.root, "../escape")
 
 
+class ResolvePackageDirTests(unittest.TestCase):
+	def setUp(self) -> None:
+		tmp = tempfile.TemporaryDirectory()
+		self.addCleanup(tmp.cleanup)
+		self.root = Path(tmp.name)
+
+	def _pkgbuild(self, *parts: str) -> None:
+		path = self.root.joinpath(*parts)
+		path.parent.mkdir(parents=True, exist_ok=True)
+		path.write_text("pkgname=x\n")
+
+	def test_root_pkgbuild_stays_put(self) -> None:
+		# Normal AUR-shape clone: PKGBUILD at root, no subdir -> return root.
+		self._pkgbuild("PKGBUILD")
+		self.assertEqual(
+			grimaur._resolve_package_dir(self.root, None, "foo"), self.root
+		)
+
+	def test_root_pkgbuild_wins_over_nested(self) -> None:
+		# A valid build dir is never overridden by a same-named nested package.
+		self._pkgbuild("PKGBUILD")
+		self._pkgbuild("foo", "PKGBUILD")
+		self.assertEqual(
+			grimaur._resolve_package_dir(self.root, None, "foo"), self.root
+		)
+
+	def test_container_descends_to_named_package(self) -> None:
+		# Monorepo container: subdir has no PKGBUILD but <subdir>/<package> does.
+		self._pkgbuild("pkgs", "foo", "PKGBUILD")
+		self.assertEqual(
+			grimaur._resolve_package_dir(self.root, "pkgs", "foo"),
+			self.root / "pkgs" / "foo",
+		)
+
+	def test_explicit_subdir_at_package_no_descend(self) -> None:
+		self._pkgbuild("pkgs", "foo", "PKGBUILD")
+		self.assertEqual(
+			grimaur._resolve_package_dir(self.root, "pkgs/foo", "foo"),
+			self.root / "pkgs" / "foo",
+		)
+
+	def test_no_pkgbuild_anywhere_returns_resolved_dir(self) -> None:
+		# No descend target -> unchanged (downstream errors as before).
+		(self.root / "pkgs").mkdir()
+		self.assertEqual(
+			grimaur._resolve_package_dir(self.root, "pkgs", "foo"),
+			self.root / "pkgs",
+		)
+
+
 class ResolveRepoTargetTests(unittest.TestCase):
 	def test_tree_url_fills_ref_and_subdir(self) -> None:
 		args = argparse.Namespace(repo_url=ARCHINSTOO_TREE, branch=None, subdir=None)

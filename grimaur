@@ -643,9 +643,24 @@ def _resolve_build_dir(clone_root: Path, subdir: str | None) -> Path:
 	return target
 
 
+def _resolve_package_dir(clone_root: Path, subdir: str | None, package: str) -> Path:
+	# Monorepo convention: a container holds one subdir per package named after it
+	# (the subdir analogue of the AUR mirror keying packages by branch). When the
+	# resolved dir has no PKGBUILD but <dir>/<package> does, descend into it, so
+	# `--repo <container-alias> install <pkg>` finds <subdir>/<pkg> automatically.
+	build_dir = _resolve_build_dir(clone_root, subdir)
+	if (build_dir / "PKGBUILD").is_file():
+		return build_dir
+	nested = build_dir / package
+	if (nested / "PKGBUILD").is_file():
+		return nested
+	return build_dir
+
+
 def _clone_with_fallback(
 	package_dir: Path,
 	candidates: Sequence[tuple[str, str | None, str | None]],
+	package: str,
 ) -> Path:
 	# Try each (url, branch, subdir) mirror in order until one clones; the winning
 	# mirror's own subdir resolves the build dir. Used only for a fresh clone.
@@ -663,7 +678,7 @@ def _clone_with_fallback(
 			if branch:
 				run_command(["git", "-C", str(package_dir), "fetch", "origin", branch])
 				_reset_git_worktree(package_dir, ("FETCH_HEAD",))
-			return _resolve_build_dir(package_dir, subdir)
+			return _resolve_package_dir(package_dir, subdir, package)
 		except AurGitError as exc:
 			errors.append(f"{url}: {exc}")
 			if index + 1 < len(candidates):
@@ -760,14 +775,14 @@ def ensure_clone(
 					branch=branch,
 					subdir=subdir,
 				)
-		return _resolve_build_dir(package_dir, subdir)
+		return _resolve_package_dir(package_dir, subdir, package)
 
 	if package_dir.exists():
 		shutil.rmtree(package_dir)
 
 	if repo_url:
 		candidates = [(repo_url, branch, subdir), *(repo_fallbacks or [])]
-		return _clone_with_fallback(package_dir, candidates)
+		return _clone_with_fallback(package_dir, candidates, package)
 
 	clone_cmd = ["git", "clone", *clone_extra]
 	if SHALLOW_CLONE:
@@ -775,7 +790,7 @@ def ensure_clone(
 	clone_cmd += [remote_url, str(package_dir)]
 	run_command(clone_cmd)
 
-	return _resolve_build_dir(package_dir, subdir)
+	return _resolve_package_dir(package_dir, subdir, package)
 
 
 def read_srcinfo(package_dir: Path) -> str:

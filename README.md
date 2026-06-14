@@ -43,7 +43,7 @@ Also accepts: `SRCINFO`
    - Pass `--clone` to delete the package's clone too
    - `grimaur remove --cache` drops the search result cache
 -  `grimaur install/fetch/inspect mypkg --repo-url <url>` to use custom URL instead
-   - Pass `--subdir <dir>` to build a package nested in a repo (monorepos)
+   - Pass `--subdir <dir>` to build a package nested in a repo (pkg monorepos)
    - Pass `--branch <ref>` to clone a specific branch, tag, or commit
    - `grimaur repo --add <url> <name>` saves an alias; reuse it with `--repo <name>` (extra `--add`s become fallback mirrors, `--ls`/`--rm` to manage)
 > `tree`/`blob` URL fills both in: `--repo-url https://provider.ext/<user>/<repo>/tree/<ref>/<subdir>`
