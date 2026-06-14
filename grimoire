@@ -2331,6 +2331,28 @@ def _repo_package_names(
 	return sorted({(name, None) for name in _lsremote_names(output)})
 
 
+def _enumerate_repo(
+	repo_url: str, branch: str | None, subdir: str | None, dest_root: Path
+) -> list[tuple[str, str | None, str | None]]:
+	# Clone (subdir layout) or ls-remote (branch layout) a custom repo and return
+	# (name, version, description) per package. Wrapped in cached_json by the caller,
+	# so this only runs on a cache miss. Clones into a scratch dir under dest-root.
+	clone_dir = dest_root / ".searchrepo"
+	dest_root.mkdir(parents=True, exist_ok=True)
+	if clone_dir.exists():
+		shutil.rmtree(clone_dir)
+	out: list[tuple[str, str | None, str | None]] = []
+	for name, srcinfo_dir in _repo_package_names(repo_url, branch, subdir, clone_dir):
+		version: str | None = None
+		description: str | None = None
+		if srcinfo_dir is not None:
+			srcinfo_path = srcinfo_dir / ".SRCINFO"
+			if srcinfo_path.exists():
+				version, description = _parse_srcinfo_metadata(srcinfo_path.read_text())
+		out.append((name, version, description))
+	return out
+
+
 def search_packages_repo(
 	repo_url: str,
 	branch: str | None,
@@ -2361,25 +2383,23 @@ def search_packages_repo(
 				"to enumerate it. Search needs an index (a subdir, branches, or sync DB)."
 			)
 	else:
-		# Enumeration needs the tree, so clone under dest-root (same convention as
-		# package clones) rather than a system /tmp; refreshed each search.
-		clone_dir = dest_root / ".searchrepo"
-		dest_root.mkdir(parents=True, exist_ok=True)
-		if clone_dir.exists():
-			shutil.rmtree(clone_dir)
-		for name, srcinfo_dir in _repo_package_names(
-			repo_url, branch, subdir, clone_dir
-		):
-			version: str | None = None
-			description: str | None = None
-			# Read .SRCINFO directly (no makepkg) when the clone gave us the dir.
-			if srcinfo_dir is not None:
-				srcinfo_path = srcinfo_dir / ".SRCINFO"
-				if srcinfo_path.exists():
-					version, description = _parse_srcinfo_metadata(
-						srcinfo_path.read_text()
-					)
-			candidates.append((name, version, description, source))
+		# Enumerate the repo (clone/ls-remote) but cache the result per source, so a
+		# repeat search doesn't re-clone. --refresh expires it (CACHE_TTL=0).
+		ckey = (
+			"repolist/"
+			+ hashlib.sha256(f"{repo_url}\n{branch}\n{subdir}".encode()).hexdigest()[
+				:16
+			]
+			+ ".json"
+		)
+		listed = cached_json(
+			ckey,
+			CACHE_TTL,
+			lambda: _enumerate_repo(repo_url, branch, subdir, dest_root),
+		)
+		for entry in listed if isinstance(listed, list) else []:
+			if isinstance(entry, (list, tuple)) and len(entry) == 3:
+				candidates.append((entry[0], entry[1], entry[2], source))
 
 	results: list[SearchResult] = []
 	for name, version, description, item_source in candidates:

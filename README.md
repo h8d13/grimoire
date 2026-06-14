@@ -92,6 +92,6 @@ AUR opt-in (a commented `[AUR]` section with RPC + git-mirror URLs).
 ### Details
 - Respects `IgnorePkg = x y z` from `/etc/pacman.conf`
 - Pass `--noconfirm` to skip prompts (install, update, remove, and search)
-- Completions are also available and have cached search complete.
+- Completions are also [available](./base/) and have cached search complete.
 
 ---

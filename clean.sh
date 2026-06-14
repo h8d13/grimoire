@@ -1,3 +1,7 @@
 #!/bin/bash
-rm -rf grimoire-git/ src/ pkg/ && rm -f *.pkg.tar.zst; echo "cleaned $PWD" || echo "failed to clean"; exit 1
+git clean -Xnd
 
+read -rp "Proceed? [y/N] " reply
+[[ "${reply}" == [yY] ]] || { echo "aborted"; exit 0; }
+
+git clean -Xfd
