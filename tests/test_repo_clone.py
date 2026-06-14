@@ -182,6 +182,51 @@ class UpdateRepoPrimitivesTests(unittest.TestCase):
 		self.assertEqual(version, "2.5-1")
 
 
+class OriginSwitchTests(unittest.TestCase):
+	"""Switching a clone's source reclones from the new origin (offline file://)."""
+
+	def setUp(self) -> None:
+		tmp = tempfile.TemporaryDirectory()
+		self.addCleanup(tmp.cleanup)
+		self.root = Path(tmp.name)
+		self.dest = self.root / "dest"
+		self.a = self.root / "a"
+		self.b = self.root / "b"
+		for repo, who in ((self.a, "a"), (self.b, "b")):
+			repo.mkdir()
+			_git(repo, "init", "-q", "-b", "master")
+			(repo / "PKGBUILD").write_text(f"pkgname=foo\npkgver={who}\n")
+			_git(repo, "add", "-A")
+			_git(repo, "commit", "-qm", "x")
+		for name in ("SHALLOW_CLONE", "USE_SSH", "USE_AUR_RPC"):
+			patcher = mock.patch.object(grimaur, name, False)
+			patcher.start()
+			self.addCleanup(patcher.stop)
+
+	def _ver(self, build_dir: Path) -> str:
+		return (build_dir / "PKGBUILD").read_text().split("pkgver=")[1].split("\n")[0]
+
+	def test_switching_source_reclones(self) -> None:
+		d1 = grimaur.ensure_clone(
+			"foo", self.dest, refresh=False, repo_url=f"file://{self.a}"
+		)
+		self.assertEqual(self._ver(d1), "a")
+		# same dest/package, different source URL -> origin mismatch -> reclone from b
+		d2 = grimaur.ensure_clone(
+			"foo", self.dest, refresh=False, repo_url=f"file://{self.b}"
+		)
+		self.assertEqual(self._ver(d2), "b")
+
+	def test_same_source_reuses(self) -> None:
+		grimaur.ensure_clone(
+			"foo", self.dest, refresh=False, repo_url=f"file://{self.a}"
+		)
+		d = grimaur.ensure_clone(
+			"foo", self.dest, refresh=False, repo_url=f"file://{self.a}"
+		)
+		self.assertEqual(self._ver(d), "a")
+
+
 class SearchRepoTests(unittest.TestCase):
 	"""search --repo enumeration of a subdir-container repo (offline file://)."""
 

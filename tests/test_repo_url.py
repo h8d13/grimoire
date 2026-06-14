@@ -293,6 +293,19 @@ class NormalizeGitUrlTests(unittest.TestCase):
 
 
 class ResolveRepoTargetTests(unittest.TestCase):
+	def setUp(self) -> None:
+		# Isolate XDG so _default_repo() never reads a real ~/.config repos.conf.
+		self._tmp = tempfile.mkdtemp()
+		self._orig = os.environ.get("XDG_CONFIG_HOME")
+		os.environ["XDG_CONFIG_HOME"] = self._tmp
+
+	def tearDown(self) -> None:
+		if self._orig is None:
+			os.environ.pop("XDG_CONFIG_HOME", None)
+		else:
+			os.environ["XDG_CONFIG_HOME"] = self._orig
+		shutil.rmtree(self._tmp, ignore_errors=True)
+
 	def test_tree_url_fills_ref_and_subdir(self) -> None:
 		args = argparse.Namespace(repo_url=ARCHINSTOO_TREE, branch=None, subdir=None)
 		self.assertEqual(
@@ -321,6 +334,71 @@ class ResolveRepoTargetTests(unittest.TestCase):
 	def test_no_repo_url_returns_none(self) -> None:
 		args = argparse.Namespace(repo_url=None, branch=None, subdir=None)
 		self.assertEqual(grimaur._resolve_repo_target(args), (None, None, None, []))
+
+
+class DefaultRepoTests(unittest.TestCase):
+	def setUp(self) -> None:
+		self._tmp = tempfile.mkdtemp()
+		self._orig = os.environ.get("XDG_CONFIG_HOME")
+		os.environ["XDG_CONFIG_HOME"] = self._tmp
+		self.conf = Path(self._tmp) / "grimaur" / "repos.conf"
+
+	def tearDown(self) -> None:
+		if self._orig is None:
+			os.environ.pop("XDG_CONFIG_HOME", None)
+		else:
+			os.environ["XDG_CONFIG_HOME"] = self._orig
+		shutil.rmtree(self._tmp, ignore_errors=True)
+
+	def _write(self, text: str) -> None:
+		self.conf.parent.mkdir(parents=True, exist_ok=True)
+		self.conf.write_text(text)
+
+	def test_no_conf_defaults_to_aur(self) -> None:
+		self.assertIsNone(grimaur._default_repo())
+
+	def test_top_section_wins(self) -> None:
+		# [ARCH] above [VUR] (AUR commented) -> ARCH is the default source.
+		self._write(
+			"#[AUR]\n#  https://aur.archlinux.org/rpc/\n\n"
+			"[ARCH]\n  https://gitlab/x/{pkgbase}.git\n\n[VUR]\n  https://x/v\n"
+		)
+		self.assertEqual(grimaur._default_repo(), "ARCH")
+
+	def test_aur_first_section_is_default(self) -> None:
+		self._write("[AUR]\n  https://aur.archlinux.org/rpc/\n\n[VUR]\n  https://x/v\n")
+		self.assertEqual(grimaur._default_repo(), "AUR")
+
+	def test_resolve_uses_default_when_no_flag(self) -> None:
+		self._write("[ARCH]\n  https://gitlab/x/{pkgbase}.git\n")
+		args = argparse.Namespace(
+			package="bash", repo=None, repo_url=None, branch=None, subdir=None
+		)
+		primary_url, _, _, _ = grimaur._resolve_repo_target(args)
+		self.assertEqual(primary_url, "https://gitlab/x/bash.git")
+
+	def test_explicit_repo_overrides_default(self) -> None:
+		self._write(
+			"[ARCH]\n  https://gitlab/x/{pkgbase}.git\n\n[VUR]\n  https://x/vur.git\n"
+		)
+		args = argparse.Namespace(
+			package="bash", repo="VUR", repo_url=None, branch=None, subdir=None
+		)
+		primary_url, _, _, _ = grimaur._resolve_repo_target(args)
+		self.assertEqual(primary_url, "https://x/vur.git")
+
+	def test_ensure_repos_conf_seeds_arch_default(self) -> None:
+		self.assertFalse(self.conf.exists())
+		grimaur._ensure_repos_conf()
+		self.assertTrue(self.conf.exists())
+		# Seeded default is [ARCH]; [AUR] present but commented (opt-in).
+		self.assertEqual(grimaur._default_repo(), "ARCH")
+		self.assertNotIn("AUR", grimaur.load_repo_registry())
+
+	def test_ensure_repos_conf_does_not_clobber(self) -> None:
+		self._write("[VUR]\n  https://x/v\n")
+		grimaur._ensure_repos_conf()
+		self.assertEqual(self.conf.read_text(), "[VUR]\n  https://x/v\n")
 
 
 class ResolveRepoAliasTargetTests(unittest.TestCase):

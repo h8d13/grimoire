@@ -1,17 +1,13 @@
 #!/usr/bin/env python3
 r"""grimaur: Fetch, inspect, search, list, update, and install, remove Arch Linux packages.
 
-By default: this tool queries the official AUR RPC API and automatically falls back to
-the git mirror at https://github.com/archlinux/aur.git when the endpoint is
-unavailable.
+It natively speaks all things `makepkg`. And works outside of AUR.
+I.e: Private software colletions, Public organizations repositories, ...
+What is defined as VUR (Virtual User Repo).
+Or official Arch Linux packages from their Gitlab.
 
-Each package lives on its own branch in the mirror, and grimaur can
-recursively resolve and install dependencies by building packages locally with
-makepkg. Official repository dependencies are installed with pacman when they are
-missing.
-
-Non-default: can also work outside of the default AUR (I.e: Private software colletions)
-What is defined as VUR (Virtual User Repo). Or even official Arch Linux packages from their Gitlab.
+grimaur can recursively resolve and install dependencies by building packages locally with
+makepkg. Official repository dependencies are installed with pacman when they are missing.
 
 In a single truth python file.
 
@@ -80,6 +76,8 @@ _COMMON_AUR_SUFFIXES = ("-bin",)
 USE_AUR_RPC = False
 FORCE_GIT_MIRROR = False
 FORCE_AUR_RPC = False
+# Optional git-mirror override from the [AUR] section in repos.conf; None = default.
+AUR_GIT_MIRROR: str | None = None
 USE_SSH = False
 SHALLOW_CLONE = False
 DEBUG = os.environ.get("DEBUG", "").lower() in ("1", "true", "yes")
@@ -135,7 +133,7 @@ SSH_REWRITE_HOSTS = {
 
 
 def get_aur_remote() -> str:
-	url = "https://github.com/archlinux/aur.git"
+	url = AUR_GIT_MIRROR or "https://github.com/archlinux/aur.git"
 	return _maybe_ssh_rewrite(url) if USE_SSH else url
 
 
@@ -361,6 +359,40 @@ def _repo_registry_path() -> Path:
 	return _xdg_config_home() / "grimaur" / "repos.conf"
 
 
+# Written on first use when no repos.conf exists. Default source is [ARCH] (build
+# official packages from source); the AUR is opt-in (commented out).
+_DEFAULT_REPOS_CONF = """\
+# grimaur repo aliases. The first (top) section is the default source when you don't
+# pass --repo; --repo <NAME> overrides per command. Manage with `grimaur repo`.
+# In a URL, {pkg} = package name, {pkgbase} = its pkgbase (from the pacman sync DBs).
+
+# Default: Arch's official packages (one repo per pkgbase on the Arch GitLab), so a
+# bare `grimaur install <pkg>` builds the official package from source.
+[ARCH]
+  https://gitlab.archlinux.org/archlinux/packaging/packages/{pkgbase}.git
+
+# The AUR (RPC API + git mirror). Opt-in: uncomment and move above [ARCH] to make it
+# the default backend again.
+#[AUR]
+#  https://aur.archlinux.org/rpc/
+#  https://github.com/archlinux/aur.git
+"""
+
+
+def _ensure_repos_conf() -> None:
+	# Seed a default repos.conf the first time a source is needed, so the default is
+	# the official Arch repos (build from source) rather than the AUR. Best-effort:
+	# if the write fails, resolution falls back to the built-in AUR.
+	path = _repo_registry_path()
+	if path.exists():
+		return
+	try:
+		path.parent.mkdir(parents=True, exist_ok=True)
+		path.write_text(_DEFAULT_REPOS_CONF)
+	except OSError:
+		pass
+
+
 def load_repo_registry() -> dict[str, list[str]]:
 	# Sectioned name->URLs map. A `[name]` header opens a section; each following
 	# non-empty, non-comment line is one mirror URL (order = clone priority).
@@ -421,6 +453,15 @@ def resolve_repo_alias(name: str) -> list[str]:
 			f"Unknown repo alias '{name}'. Add one with --repo-add URL {name}"
 		)
 	return urls
+
+
+def _default_repo() -> str | None:
+	# The source used when no --repo/--repo-url is given: the first section in
+	# repos.conf (priority order, top wins), or None for the built-in AUR when there
+	# is no config. "AUR" as the first section also means the built-in AUR backend.
+	for name in load_repo_registry():
+		return name
+	return None
 
 
 # Mirror SSH_REWRITE_HOSTS as git insteadOf rules via GIT_CONFIG_* env vars
@@ -3154,10 +3195,18 @@ def _resolve_repo_target(
 ) -> tuple[
 	str | None, str | None, str | None, list[tuple[str, str | None, str | None]]
 ]:
+	alias = getattr(args, "repo", None)
+	repo_url = getattr(args, "repo_url", None)
+	# No explicit source -> trust the conf: use its top section as the default.
+	# "AUR" (or no conf) means the built-in AUR backend (alias stays None).
+	if not alias and not repo_url:
+		default = _default_repo()
+		if default is not None and default != "AUR":
+			alias = default
 	return _resolve_repo_for_package(
 		getattr(args, "package", None),
-		alias=getattr(args, "repo", None),
-		repo_url=getattr(args, "repo_url", None),
+		alias=alias,
+		repo_url=repo_url,
 		branch=getattr(args, "branch", None),
 		subdir=getattr(args, "subdir", None),
 	)
@@ -3214,12 +3263,20 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 	global USE_COLOR, USE_AUR_RPC, FORCE_GIT_MIRROR, FORCE_AUR_RPC
 	global USE_SSH, SHALLOW_CLONE, CACHE_DIR, CACHE_TTL
+	global AUR_RPC_ENDPOINT, AUR_GIT_MIRROR
 	CACHE_DIR = dest_root / ".searchcache"
 	if refresh:
 		# --refresh means "give me fresh data": expire every read,
 		# keep writing so the cache ends up repopulated.
 		CACHE_TTL = 0
 	USE_COLOR = not getattr(args, "no_color", False) and sys.stdout.isatty()
+	# An [AUR] section's URLs override the RPC endpoint and git mirror (matched by
+	# content, so order/commenting a single line is fine).
+	for url in load_repo_registry().get("AUR", []):
+		if "rpc" in url:
+			AUR_RPC_ENDPOINT = url
+		else:
+			AUR_GIT_MIRROR = url
 	# Backend tri-state: None = auto (RPC, mirror fallback),
 	# True = --aur-rpc (force RPC), False = --git-mirror (force mirror).
 	backend = getattr(args, "aur_rpc", None)
@@ -3244,6 +3301,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 	if args.command is None:
 		parser.print_help()
 		return 0
+
+	# Seed a default repos.conf ([ARCH], AUR opt-in) the first time a source is
+	# resolved, so the default is the official repos rather than the built-in AUR.
+	if args.command in {"install", "fetch", "inspect", "search"}:
+		_ensure_repos_conf()
 
 	# fallback when /tmp is not writable, use our default + .tmp.
 	current_tmp = os.environ.get("TMPDIR") or "/tmp"  # noqa: S108 - standard TMPDIR default, writability checked below
@@ -3337,13 +3399,20 @@ def main(argv: Sequence[str] | None = None) -> int:
 				subdir=getattr(args, "subdir", None),
 			)
 		elif args.command == "search":
-			# package=None: a search has no package to fill {pkg}; templated aliases
-			# are rejected inside search_packages_repo (no index to enumerate).
+			# No explicit source -> trust the conf's top section as the default.
+			search_alias = getattr(args, "repo", None)
+			search_repo_url_arg = getattr(args, "repo_url", None)
+			if not search_alias and not search_repo_url_arg:
+				default = _default_repo()
+				if default is not None and default != "AUR":
+					search_alias = default
+			# package=None: a search has no package to fill {pkg}/{pkgbase}; templated
+			# aliases enumerate the sync DBs inside search_packages_repo instead.
 			search_repo_url, search_branch, search_subdir, _ = (
 				_resolve_repo_for_package(
 					None,
-					alias=getattr(args, "repo", None),
-					repo_url=getattr(args, "repo_url", None),
+					alias=search_alias,
+					repo_url=search_repo_url_arg,
 					branch=getattr(args, "branch", None),
 					subdir=getattr(args, "subdir", None),
 				)
@@ -3371,7 +3440,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 					regex=regex_obj,
 					needle=needle,
 					limit=args.limit,
-					source=getattr(args, "repo", None) or search_repo_url,
+					source=search_alias or search_repo_url,
 					dest_root=dest_root,
 				)
 			else:
@@ -3424,8 +3493,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 				if search_repo_url:
 					p_url, p_branch, p_subdir, p_fallbacks = _resolve_repo_for_package(
 						pkg.name,
-						alias=getattr(args, "repo", None),
-						repo_url=getattr(args, "repo_url", None),
+						alias=search_alias,
+						repo_url=search_repo_url_arg,
 						branch=getattr(args, "branch", None),
 						subdir=getattr(args, "subdir", None),
 					)

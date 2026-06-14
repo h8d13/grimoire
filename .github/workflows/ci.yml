@@ -61,24 +61,30 @@ jobs:
           chown -R builder:builder .
 # setup done; all steps below run as builder via defaults.run.shell
       - run: ./grimaur --help
-      - run: ./grimaur fetch $PKG
-      - run: ./grimaur --refresh fetch $PKG
-      - run: ./grimaur fetch --force $PKG
 
-      - name: Shallow clone is depth=1
+      # --- Custom repo (VUR): build grimaur-git from a custom source, before the AUR ---
+      - name: Build grimaur-git from a custom repo (VUR)
         run: |
-          rm -rf ~/.cache/grimaur
-          ./grimaur --shallow fetch $PKG
-          count=$(git -C ~/.cache/grimaur/$PKG rev-list --count HEAD)
-          [ "$count" = "1" ]; echo "got $count, test pass." || { echo "expected 1, got $count"; exit 1; }
+          # scheme-less, subdir-per-pkg container alias; `repo` never auto-seeds a conf
+          ./grimaur repo --add 'github.com/h8d13/VUR/tree/master/pkgs' VUR
+          ./grimaur repo --ls
+          ./grimaur install grimaur-git --repo VUR --noconfirm
+          # verify it was built from the custom source (origin is VUR, not the AUR)
+          git -C ~/.cache/grimaur/grimaur-git remote get-url origin | grep -q 'h8d13/VUR'
+          pacman -Q grimaur-git
+          echo "grimaur-git built from VUR: PASS"
 
-      - run: ./grimaur --git-mirror fetch --force $PKG
-      - run: ./grimaur fetch --force $PKG --git-mirror
-      - run: ./grimaur --git-mirror update --noconfirm
-      - run: ./grimaur inspect $PKG --target PKGBUILD
-
-      - name: Search unbounded (timed)
-        run: time ./grimaur search $PATTERN --no-interactive
+      - name: Custom-repo reads (default source, search, {pkgbase})
+        run: |
+          ./grimaur repo --add 'https://gitlab.archlinux.org/archlinux/packaging/packages/{pkgbase}.git' ARCH
+          # bare command (no --repo) uses the top section = VUR -> descends pkgs/<pkg>
+          ./grimaur fetch grimaur-git | grep -q 'pkgs/grimaur-git'
+          ./grimaur search '' --repo VUR --no-interactive --plain | grep -q 'vscodium-rel'
+          ./grimaur search bash --repo ARCH --no-interactive --plain | grep -qE '(core|extra)/bash'
+          # split package resolves name -> pkgbase via the sync DB
+          ./grimaur inspect amd-ucode --repo ARCH --target PKGBUILD | grep -q '^pkgbase=linux-firmware'
+          ./grimaur update grimaur-git --repo VUR --noconfirm 2>&1 | tee /tmp/upd.log
+          grep -q 'up to date' /tmp/upd.log
 
       - name: Test --use-ssh rewrites URLs (clone fails, but rewrite worked)
         env:
@@ -88,39 +94,33 @@ jobs:
           grep -qF 'ssh://git@github.com/h8d13/archinstoo' /tmp/ssh.log; echo "URL re-written PASS." \
             || { echo "FAIL: --use-ssh did not rewrite URL to ssh://"; exit 1; }
 
-      - name: Install via grimaur (as builder)
-        run: ./grimaur install $PKG --noconfirm
-
-      - name: Custom repo - alias, scheme-less, templating, stale-switch
+      # --- AUR backend: opt in ([AUR] as the only/first section) and exercise it ---
+      - name: Enable the AUR and run AUR-backed tests (yay)
         run: |
-          # subdir-per-pkg container alias, scheme-less URL accepted
-          ./grimaur repo --add 'github.com/h8d13/VUR/tree/master/pkgs' VUR
-          ./grimaur repo --ls
-          ./grimaur fetch grimaur-git --repo VUR
-          ./grimaur inspect grimaur-git --repo VUR --target PKGBUILD | grep -q '^pkgname=grimaur-git'
-          # a stale AUR clone must reclone when the source switches to VUR
-          rm -rf ~/.cache/grimaur/grimaur-git
-          ./grimaur --git-mirror fetch grimaur-git
-          ./grimaur inspect grimaur-git --repo VUR --target PKGBUILD | grep -q '^pkgname=grimaur-git'
-          # {pkgbase} templating against the Arch GitLab (repo-per-pkgbase). bash is a
-          # single package: PKGBUILD has pkgname, no explicit pkgbase line.
-          ./grimaur repo --add 'https://gitlab.archlinux.org/archlinux/packaging/packages/{pkgbase}.git' arch
-          ./grimaur inspect bash --repo arch --target PKGBUILD | grep -q '^pkgname=bash'
-          # split package resolves name -> pkgbase via the sync DB (amd-ucode -> linux-firmware)
-          ./grimaur inspect amd-ucode --repo arch --target PKGBUILD | grep -q '^pkgbase=linux-firmware'
+          rm -f ~/.config/grimaur/repos.conf
+          ./grimaur repo --add 'https://aur.archlinux.org/rpc/' AUR
+          ./grimaur repo --add 'https://github.com/archlinux/aur.git' AUR
+          ./grimaur fetch $PKG
+          ./grimaur --refresh fetch $PKG
+          ./grimaur fetch --force $PKG
+          rm -rf ~/.cache/grimaur/$PKG
+          ./grimaur --shallow fetch $PKG
+          count=$(git -C ~/.cache/grimaur/$PKG rev-list --count HEAD)
+          [ "$count" = "1" ] && echo "shallow depth=1 PASS" || { echo "expected 1, got $count"; exit 1; }
+          ./grimaur --git-mirror fetch --force $PKG
+          ./grimaur inspect $PKG --target PKGBUILD
+          time ./grimaur search $PATTERN --no-interactive
+          ./grimaur install $PKG --noconfirm       # bare -> default [AUR]
+          pacman -Q $PKG
+          echo "$PKG built from AUR: PASS"
 
-      - name: Search a custom repo (VUR enumeration + sync-DB-backed template)
+      # --- First run with no conf auto-seeds an [ARCH] default (AUR opt-in) ---
+      - name: First run seeds an [ARCH] default conf
         run: |
-          ./grimaur search '' --repo VUR --no-interactive --plain | grep -q 'vscodium-rel'
-          ./grimaur search codium --repo VUR --no-interactive --plain | grep -q 'vscodium-rel'
-          # a {pkgbase}-templated alias has no list of its own; it enumerates the sync DBs,
-          # labeling each result with its real pacman repo (like pacman -Ss)
-          ./grimaur search bash --repo arch --no-interactive --plain | grep -qE '(core|extra)/bash'
-
-      - name: Install + update from a custom repo (VUR)
-        run: |
-          ./grimaur install grimaur-git --repo VUR --noconfirm
-          ./grimaur update grimaur-git --repo VUR --noconfirm 2>&1 | tee /tmp/upd.log
-          grep -q 'up to date' /tmp/upd.log
+          rm -f ~/.config/grimaur/repos.conf
+          ./grimaur inspect bash --target PKGBUILD | grep -q '^pkgname=bash'   # bare -> auto [ARCH]
+          test -f ~/.config/grimaur/repos.conf
+          grep -q '^\[ARCH\]' ~/.config/grimaur/repos.conf
+          grep -q '^#\[AUR\]' ~/.config/grimaur/repos.conf
 
       - run: ./grimaur list

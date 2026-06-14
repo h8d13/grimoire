@@ -46,8 +46,9 @@ Also accepts: `SRCINFO`
    - `grimaur remove --cache` drops the search result cache
 
 ### Build from other sources
-The default source is the AUR. But point at anything else that ships a `PKGBUILD`
-with `--repo-url`/`--repo` on `install`, `fetch`, `inspect`, `search`, and `update`:
+The default source is the top section of `repos.conf` (auto-seeded to `[ARCH]`; see below).
+Point at anything else that ships a `PKGBUILD` with `--repo-url`/`--repo` on
+`install`, `fetch`, `inspect`, `search`, and `update`:
    - `--repo-url <url>` builds from a git URL (scheme optional: `github.com/u/r` works).
    - `--branch <ref>` / `--subdir <dir>` pick a ref, or a package nested in a monorepo
    - `repo --add <url> <name>` saves an alias; use it with `--repo <name>`.
@@ -61,6 +62,10 @@ with `--repo-url`/`--repo` on `install`, `fetch`, `inspect`, `search`, and `upda
 `search --repo <name>` lists a repo's packages, a package-per-dir subdir, or its branches and falls-back to local DB.
 
 See [`repos.conf.example`](./repos.conf.example) for ready-made `VUR` and `ARCH` aliases; copy it to `~/.config/grimaur/repos.conf` to start.
+
+The **first (top) section** in `repos.conf` is the default source when you don't pass `--repo`; `--repo <name>` overrides per command.
+On first use grimaur **auto-creates** `~/.config/grimaur/repos.conf` with `[ARCH]` as the default (build official packages from source)
+AUR opt-in (a commented `[AUR]` section with RPC + git-mirror URLs).
 
 ### Stay Updated
 - `grimaur update` rebuilds every installed “foreign” package that has a newer release.

@@ -1,17 +1,26 @@
 # grimaur repo aliases -- example.
 # Copy to $XDG_CONFIG_HOME/grimaur/repos.conf (usually ~/.config/grimaur/repos.conf),
-# then use any of: install / fetch / inspect / search / update <pkg> --repo <NAME>.
+# then use any of: install / fetch / inspect / search / update <pkg> [--repo <NAME>].
 #
 # Each [NAME] is an alias; the indented lines under it are mirror URLs (the first is
 # primary, the rest are fallbacks tried in order). Manage with `grimaur repo --add/--rm/--ls`.
 # In a URL, {pkg} is replaced by the package name and {pkgbase} by its pkgbase
 # (looked up from the local pacman sync DBs, so split packages resolve too).
+#
+# PRIORITY: the FIRST (top) section is the default source when you don't pass --repo.
+# Reorder to change the default; pass --repo <NAME> to override per command.
 
-# A subdir-container repo: one dir per package under pkgs/ (auto-descends to pkgs/<pkg>).
+# Default: Arch's official packages, one repo per pkgbase on the Arch GitLab -- so a
+# bare `grimaur install <pkg>` builds the official package from source.
+[ARCH]
+  https://gitlab.archlinux.org/archlinux/packaging/packages/{pkgbase}.git
+
+# A custom subdir-container repo: one dir per package under pkgs/. Use with --repo VUR.
 [VUR]
   https://github.com/h8d13/VUR/tree/master/pkgs
 
-# Arch official packages, one repo per pkgbase on the Arch GitLab. Builds from source.
-# `search --repo ARCH` lists from the local pacman sync DBs (run `pacman -Sy` to refresh).
-[ARCH]
-  https://gitlab.archlinux.org/archlinux/packaging/packages/{pkgbase}.git
+# The AUR (RPC API + git mirror). Commented out, so it is not the default. Uncomment
+# and move it above [ARCH] to make the AUR your default backend again.
+#[AUR]
+#  https://aur.archlinux.org/rpc/
+#  https://github.com/archlinux/aur.git
