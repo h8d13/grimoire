@@ -59,7 +59,7 @@ Point at anything else that ships a `PKGBUILD` with `--repo-url`/`--repo` on
    grimaur repo --add 'https://gitlab.archlinux.org/archlinux/packaging/packages/{pkgbase}.git' arch
    grimaur install <pkg> --repo arch   # builds an official package from source
    ```
-`search --repo <name>` lists a repo's packages, a package-per-dir subdir, or its branches and falls-back to local DB.
+A bare `search <term>` queries **every** section in `repos.conf` and merges the results (like `pacman -Ss`, each labeled by source), so an enabled alias shows up without `--repo`. `search --repo <name>` scopes to one (a package-per-dir subdir, branches, or the local sync DBs for a `{pkgbase}` template). Installing a result builds it from the source it was found in.
 
 See [`repos.conf.example`](./repos.conf.example) for ready-made `VUR` and `ARCH` aliases; copy it to `~/.config/grimaur/repos.conf` to start.
 

@@ -81,6 +81,8 @@ jobs:
           ./grimaur fetch grimaur-git | grep -q 'pkgs/grimaur-git'
           ./grimaur search '' --repo VUR --no-interactive --plain | grep -q 'vscodium-rel'
           ./grimaur search bash --repo ARCH --no-interactive --plain | grep -qE '(core|extra)/bash'
+          # bare search aggregates ALL conf sections -> VUR shows without --repo
+          ./grimaur search vscodium-rel --no-interactive --plain | grep -q 'VUR/vscodium-rel'
           # split package resolves name -> pkgbase via the sync DB
           ./grimaur inspect amd-ucode --repo ARCH --target PKGBUILD | grep -q '^pkgbase=linux-firmware'
           ./grimaur update grimaur-git --repo VUR --noconfirm 2>&1 | tee /tmp/upd.log

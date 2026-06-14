@@ -574,6 +574,10 @@ class SearchResult:
 	source: str | None = None
 	# True when sourced from a local pacman sync DB (label as `db`, not a protocol).
 	from_db: bool = False
+	# Conf alias this result can be installed from (None = the AUR/default backend).
+	# Distinct from `source`: sync-DB results display their pacman repo but install
+	# via their alias (e.g. display "core", install via "ARCH").
+	repo_alias: str | None = None
 
 
 @dataclass(frozen=True)
@@ -2368,6 +2372,7 @@ def search_packages_repo(
 	limit: int | None,
 	source: str,
 	dest_root: Path,
+	alias: str | None = None,
 ) -> list[SearchResult]:
 	if limit is None:
 		limit = 50
@@ -2421,6 +2426,7 @@ def search_packages_repo(
 				score=score,
 				source=item_source,
 				from_db=from_db,
+				repo_alias=alias,
 			)
 		)
 	results.sort(key=lambda result: (result.score, result.name))
@@ -3399,27 +3405,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 				subdir=getattr(args, "subdir", None),
 			)
 		elif args.command == "search":
-			# No explicit source -> trust the conf's top section as the default.
-			search_alias = getattr(args, "repo", None)
-			search_repo_url_arg = getattr(args, "repo_url", None)
-			if not search_alias and not search_repo_url_arg:
-				default = _default_repo()
-				if default is not None and default != "AUR":
-					search_alias = default
-			# package=None: a search has no package to fill {pkg}/{pkgbase}; templated
-			# aliases enumerate the sync DBs inside search_packages_repo instead.
-			search_repo_url, search_branch, search_subdir, _ = (
-				_resolve_repo_for_package(
-					None,
-					alias=search_alias,
-					repo_url=search_repo_url_arg,
-					branch=getattr(args, "branch", None),
-					subdir=getattr(args, "subdir", None),
-				)
-			)
+			explicit_alias = getattr(args, "repo", None)
+			explicit_url = getattr(args, "repo_url", None)
+			branch_arg = getattr(args, "branch", None)
+			subdir_arg = getattr(args, "subdir", None)
 			regex_obj: re.Pattern | None = None
 			needle: str | None = None
-			# Auto-detect regex or allow explicit --regex flag
 			use_regex = is_regex(args.pattern)
 			if use_regex:
 				try:
@@ -3427,34 +3418,63 @@ def main(argv: Sequence[str] | None = None) -> int:
 				except re.error as exc:
 					print(f"error: invalid regular expression: {exc}", file=sys.stderr)
 					return 1
-				# Regex search requires git mirror, disable AUR RPC
-				if not search_repo_url:
-					USE_AUR_RPC = False
+				# Regex search runs over the git mirror, not the AUR RPC.
+				USE_AUR_RPC = False
 			else:
 				needle = args.pattern.lower()
-			if search_repo_url:
-				results = search_packages_repo(
-					search_repo_url,
-					search_branch,
-					search_subdir,
-					regex=regex_obj,
-					needle=needle,
-					limit=args.limit,
-					source=search_alias or search_repo_url,
-					dest_root=dest_root,
-				)
+
+			# Sources to search. An explicit --repo/--repo-url scopes to one; otherwise
+			# search every section in repos.conf (merged, like `pacman -Ss`) so an
+			# enabled alias shows up without --repo. (alias, url): alias "AUR" or
+			# (None, None) means the AUR backend.
+			if explicit_alias or explicit_url:
+				sources: list[tuple[str | None, str | None]] = [
+					(explicit_alias, explicit_url)
+				]
 			else:
-				results = search_packages(
-					args.pattern,
-					regex=regex_obj,
-					needle=needle,
-					limit=args.limit,
+				sources = [(name, None) for name in load_repo_registry()] or [
+					(None, None)
+				]
+
+			results: list[SearchResult] = []
+			for src_alias, src_url in sources:
+				if src_url is None and (src_alias is None or src_alias == "AUR"):
+					results += search_packages(
+						args.pattern, regex=regex_obj, needle=needle, limit=args.limit
+					)
+					continue
+				r_url, r_branch, r_subdir, _ = _resolve_repo_for_package(
+					None,
+					alias=src_alias,
+					repo_url=src_url,
+					branch=branch_arg,
+					subdir=subdir_arg,
 				)
+				if r_url is None:
+					continue
+				try:
+					results += search_packages_repo(
+						r_url,
+						r_branch,
+						r_subdir,
+						regex=regex_obj,
+						needle=needle,
+						limit=args.limit,
+						source=src_alias or r_url,
+						dest_root=dest_root,
+						alias=src_alias,
+					)
+				except AurGitError as exc:
+					# A source that can't enumerate (e.g. templated with no index) is
+					# skipped in an aggregated search instead of failing the whole run.
+					print(f"warning: {src_alias}: {exc}", file=sys.stderr)
+
 			if not results:
 				print("No matches found", file=sys.stderr)
 				return 1
 
-			ordered_results = order_search_results(results)
+			cap = args.limit if (args.limit is not None and args.limit >= 0) else 50
+			ordered_results = order_search_results(results)[:cap]
 			if args.plain:
 				for result in ordered_results:
 					for line in format_search_result_plain(result):
@@ -3486,17 +3506,26 @@ def main(argv: Sequence[str] | None = None) -> int:
 			shared_visited: set[str] = set()
 			shared_preinstalled_official: set[str] = set()
 			for pkg in selected:
+				# Install each pick from the source it was found in.
 				p_url: str | None = None
 				p_branch: str | None = None
 				p_subdir: str | None = None
 				p_fallbacks: list[tuple[str, str | None, str | None]] = []
-				if search_repo_url:
+				if pkg.repo_alias:
 					p_url, p_branch, p_subdir, p_fallbacks = _resolve_repo_for_package(
 						pkg.name,
-						alias=search_alias,
-						repo_url=search_repo_url_arg,
-						branch=getattr(args, "branch", None),
-						subdir=getattr(args, "subdir", None),
+						alias=pkg.repo_alias,
+						repo_url=None,
+						branch=branch_arg,
+						subdir=subdir_arg,
+					)
+				elif explicit_url:
+					p_url, p_branch, p_subdir, p_fallbacks = _resolve_repo_for_package(
+						pkg.name,
+						alias=None,
+						repo_url=explicit_url,
+						branch=branch_arg,
+						subdir=subdir_arg,
 					)
 				try:
 					install_package(
