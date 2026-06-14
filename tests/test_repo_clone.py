@@ -284,10 +284,11 @@ class SearchRepoTests(unittest.TestCase):
 			)
 
 	def test_templated_alias_enumerates_sync_db(self) -> None:
-		# With a sync DB, a templated alias searches pacman's index instead.
+		# With a sync DB, a templated alias searches pacman's index, and each result
+		# is labeled with its actual repo (extra/cachyos/...), like `pacman -Ss`.
 		fake = (
-			("amd-ucode", "1-1", "AMD microcode"),
-			("bash", "5-1", "shell"),
+			("amd-ucode", "1-1", "AMD microcode", "core"),
+			("yay", "12-1", "AUR helper", "cachyos"),
 		)
 		with mock.patch.object(grimaur, "_sync_db_packages", return_value=fake):
 			results = grimaur.search_packages_repo(
@@ -301,7 +302,15 @@ class SearchRepoTests(unittest.TestCase):
 				dest_root=self.root / "dest",
 			)
 		self.assertEqual([r.name for r in results], ["amd-ucode"])
-		self.assertEqual(results[0].source, "arch")
+		# label is the real repo, not the alias, and marked as a local DB source
+		self.assertEqual(results[0].source, "core")
+		self.assertTrue(results[0].from_db)
+		self.assertIn("[db core]", grimaur.format_search_result(1, results[0])[0])
+		self.assertTrue(
+			grimaur.format_search_result_plain(results[0])[0].startswith(
+				"core/amd-ucode"
+			)
+		)
 
 
 if __name__ == "__main__":

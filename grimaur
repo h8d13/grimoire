@@ -205,10 +205,12 @@ def _resolve_pkgbase(package: str) -> str:
 
 
 @cache
-def _sync_db_packages() -> tuple[tuple[str, str | None, str | None], ...]:
-	# Every package in the pacman sync DBs as (name, version, description). Lets
+def _sync_db_packages() -> tuple[tuple[str, str | None, str | None, str], ...]:
+	# Every package in the pacman sync DBs as (name, version, description, repo). Lets
 	# `search --repo <templated>` enumerate via pacman's index when the alias itself
-	# has none (the Arch GitLab repo-per-pkgbase). gzip + zstd DBs; first repo wins.
+	# has none (the Arch GitLab repo-per-pkgbase). repo is the DB name (extra, cachyos,
+	# ...) so results read like `pacman -Ss` and you can tell which a forge can build.
+	# Every repo copy is listed (no dedup), matching pacman. gzip + zstd DBs.
 	import tarfile
 
 	sync = _pacman_db_path() / "sync"
@@ -216,8 +218,9 @@ def _sync_db_packages() -> tuple[tuple[str, str | None, str | None], ...]:
 		dbs = sorted(sync.glob("*.db"))
 	except OSError:
 		return ()
-	seen: dict[str, tuple[str | None, str | None]] = {}
+	out: list[tuple[str, str | None, str | None, str]] = []
 	for db in dbs:
+		repo = db.stem
 		try:
 			with tarfile.open(db, "r:*") as tar:
 				for member in tar:
@@ -232,11 +235,13 @@ def _sync_db_packages() -> tuple[tuple[str, str | None, str | None], ...]:
 						)
 					)
 					name = fields.get("NAME")
-					if name and name not in seen:
-						seen[name] = (fields.get("VERSION"), fields.get("DESC"))
+					if name:
+						out.append(
+							(name, fields.get("VERSION"), fields.get("DESC"), repo)
+						)
 		except OSError, tarfile.TarError:
 			continue
-	return tuple((n, v, d) for n, (v, d) in seen.items())
+	return tuple(out)
 
 
 def _read_pacman_auth() -> str | None:
@@ -525,6 +530,8 @@ class SearchResult:
 	is_orphan: bool | None = None
 	# Display label for the source repo (alias/URL); None means the AUR.
 	source: str | None = None
+	# True when sourced from a local pacman sync DB (label as `db`, not a protocol).
+	from_db: bool = False
 
 
 @dataclass(frozen=True)
@@ -2323,9 +2330,12 @@ def search_packages_repo(
 	if limit is None:
 		limit = 50
 	installed = installed_package_set()
-	# (name, version, description) candidates from whichever index applies.
-	candidates: list[tuple[str, str | None, str | None]] = []
-	if "{pkg}" in repo_url or "{pkgbase}" in repo_url:
+	# (name, version, description, source) candidates from whichever index applies.
+	# source = the pacman repo for sync-DB results (extra/cachyos/...) so a templated
+	# search reads like `pacman -Ss`; the alias name for an enumerable repo.
+	candidates: list[tuple[str, str | None, str | None, str]] = []
+	from_db = "{pkg}" in repo_url or "{pkgbase}" in repo_url
+	if from_db:
 		# A template has no per-alias listing; fall back to the pacman sync DBs (the
 		# Arch GitLab case). Genuinely indexless aliases still error.
 		candidates = list(_sync_db_packages())
@@ -2353,10 +2363,10 @@ def search_packages_repo(
 					version, description = _parse_srcinfo_metadata(
 						srcinfo_path.read_text()
 					)
-			candidates.append((name, version, description))
+			candidates.append((name, version, description, source))
 
 	results: list[SearchResult] = []
-	for name, version, description in candidates:
+	for name, version, description, item_source in candidates:
 		score = compute_match_score(name, regex=regex, needle=needle)
 		if score is None:
 			continue
@@ -2367,7 +2377,8 @@ def search_packages_repo(
 				description=description,
 				installed=name in installed,
 				score=score,
-				source=source,
+				source=item_source,
+				from_db=from_db,
 			)
 		)
 	results.sort(key=lambda result: (result.score, result.name))
@@ -2445,8 +2456,11 @@ def format_search_result(index: int, result: SearchResult) -> list[str]:
 	if result.installed:
 		main_parts.append(style("[installed]", GREEN))
 	protocol = "ssh" if USE_SSH else "https"
-	if result.source is not None:
-		meta_bits: list[str] = [f"{protocol} {result.source}"]
+	if result.from_db:
+		# Listed from a local pacman sync DB, not fetched over a protocol.
+		meta_bits: list[str] = [f"db {result.source}"]
+	elif result.source is not None:
+		meta_bits = [f"{protocol} {result.source}"]
 	# Note using votes we can know its a rpc result
 	elif result.votes is not None:
 		meta_bits = [f"{protocol} aur rpc", f"{result.votes} votes"]

@@ -112,8 +112,9 @@ jobs:
         run: |
           ./grimaur search '' --repo VUR --no-interactive --plain | grep -q 'vscodium-rel'
           ./grimaur search codium --repo VUR --no-interactive --plain | grep -q 'vscodium-rel'
-          # a {pkgbase}-templated alias has no list of its own; it enumerates the sync DBs
-          ./grimaur search bash --repo arch --no-interactive --plain | grep -q 'arch/bash'
+          # a {pkgbase}-templated alias has no list of its own; it enumerates the sync DBs,
+          # labeling each result with its real pacman repo (like pacman -Ss)
+          ./grimaur search bash --repo arch --no-interactive --plain | grep -qE '(core|extra)/bash'
 
       - name: Install + update from a custom repo (VUR)
         run: |
