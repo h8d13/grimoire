@@ -98,6 +98,7 @@ _RPC_FALLBACK_NOTIFIED = False
 _PACMAN_AUTH_RE = re.compile(r'^\s*PACMAN_AUTH\s*=\s*\(?\s*"?([^"\s)]+)"?')
 _PACMAN_DBPATH_RE = re.compile(r"^\s*DBPath\s*=\s*(\S+)")
 _DEP_SPLIT_RE = re.compile(r"[<>~=]+")
+_DESC_FIELD_RE = re.compile(r"%(\w+)%\n([^\n]*)")
 
 
 _SRCINFO_KEYS = {
@@ -164,9 +165,6 @@ def _pacman_db_path() -> Path:
 		if match:
 			return Path(match.group(1))
 	return Path("/var/lib/pacman")
-
-
-_DESC_FIELD_RE = re.compile(r"%(\w+)%\n([^\n]*)")
 
 
 @cache
