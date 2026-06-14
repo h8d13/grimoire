@@ -49,7 +49,7 @@ Also accepts: `SRCINFO`
 ### Build from other sources
 
 With no `--repo`, sources are tried in `repos.conf` order (top first); the first that has
-the package wins, the rest are fallbacks. `repos.conf` is auto-seeded to `[ARCH]` (see below).
+the package wins, the rest are fallbacks. `repos.conf` is auto-seeded to `[ARCH]` official Gitlab.
 Point at anything else that ships a `PKGBUILD` with `--repo-url`/`--repo` on
 `install`, `fetch`, `inspect`, `search`, and `update`:
    - `--repo-url <url>` builds from a git URL (scheme optional: `provider.ext/u/r` works).
@@ -63,7 +63,7 @@ Point at anything else that ships a `PKGBUILD` with `--repo-url`/`--repo` on
    grimoire install <pkg>
    ```
 A bare `search <term>` queries **every** section in `repos.conf` and merges the results.
-`--repo <name>` searches only this repo.
+`--repo <name>` searches only this specific repo.
 
 See [`repos.conf.example`](./repos.conf.example) for examples.
 

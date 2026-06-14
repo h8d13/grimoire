@@ -358,6 +358,156 @@ class SearchRepoTests(unittest.TestCase):
 		)
 
 
+class SparseCloneTests(unittest.TestCase):
+	"""A monorepo clone checks out only the target package's subtree; a solo repo
+	(PKGBUILD at the root) checks out whole (offline file://)."""
+
+	def setUp(self) -> None:
+		tmp = tempfile.TemporaryDirectory()
+		self.addCleanup(tmp.cleanup)
+		self.root = Path(tmp.name)
+		for name in ("SHALLOW_CLONE", "USE_SSH"):
+			patcher = mock.patch.object(grimoire, name, False)
+			patcher.start()
+			self.addCleanup(patcher.stop)
+
+	def _flat(self) -> Path:
+		src = self.root / "flat"
+		src.mkdir()
+		_git(src, "init", "-q", "-b", "master")
+		for name in ("foo", "bar"):
+			(src / name).mkdir()
+			(src / name / "PKGBUILD").write_text(f"pkgname={name}\npkgver=1\n")
+		_git(src, "add", "-A")
+		_git(src, "commit", "-qm", "x")
+		return src
+
+	def test_flat_checks_out_only_target(self) -> None:
+		src = self._flat()
+		dest = self.root / "d1"
+		build = grimoire.ensure_clone(
+			"foo", dest, refresh=False, repo_url=f"file://{src}"
+		)
+		self.assertEqual(build, dest / "foo" / "foo")
+		self.assertTrue((build / "PKGBUILD").is_file())
+		# Sparse: the other package's dir is not materialized in the worktree.
+		self.assertFalse((dest / "foo" / "bar").exists())
+
+	def test_subdir_container_checks_out_only_target(self) -> None:
+		src = self.root / "cont"
+		src.mkdir()
+		_git(src, "init", "-q", "-b", "master")
+		for name in ("foo", "bar"):
+			(src / "pkgs" / name).mkdir(parents=True)
+			(src / "pkgs" / name / "PKGBUILD").write_text(f"pkgname={name}\npkgver=1\n")
+		_git(src, "add", "-A")
+		_git(src, "commit", "-qm", "x")
+		dest = self.root / "d2"
+		build = grimoire.ensure_clone(
+			"foo", dest, refresh=False, repo_url=f"file://{src}", subdir="pkgs"
+		)
+		self.assertEqual(build, dest / "foo" / "pkgs" / "foo")
+		self.assertFalse((dest / "foo" / "pkgs" / "bar").exists())
+
+	def test_solo_repo_checks_out_whole_tree(self) -> None:
+		# PKGBUILD at the root -> not a container; the whole tree (incl. sibling dirs)
+		# must survive, so no sparse narrowing.
+		src = self.root / "solo"
+		src.mkdir()
+		_git(src, "init", "-q", "-b", "master")
+		(src / "PKGBUILD").write_text("pkgname=foo\npkgver=1\n")
+		(src / "data").mkdir()
+		(src / "data" / "patch.diff").write_text("x\n")
+		_git(src, "add", "-A")
+		_git(src, "commit", "-qm", "x")
+		dest = self.root / "d3"
+		build = grimoire.ensure_clone(
+			"foo", dest, refresh=False, repo_url=f"file://{src}"
+		)
+		self.assertEqual(build, dest / "foo")
+		self.assertTrue((build / "PKGBUILD").is_file())
+		self.assertTrue((build / "data" / "patch.diff").is_file())
+
+
+class FlatRepoSearchTests(unittest.TestCase):
+	"""search enumeration of a flat repo: package dirs at the root, no subdir, a
+	single branch (offline file://). Distinguished from branch-per-package by head
+	count."""
+
+	def setUp(self) -> None:
+		tmp = tempfile.TemporaryDirectory()
+		self.addCleanup(tmp.cleanup)
+		self.root = Path(tmp.name)
+		self.src = self.root / "src"
+		self.src.mkdir()
+		_git(self.src, "init", "-q", "-b", "master")
+		for name, ver in (("foo", "1.0"), ("bar", "2.0")):
+			d = self.src / name
+			d.mkdir()
+			(d / "PKGBUILD").write_text(f"pkgname={name}\npkgver={ver}\npkgrel=1\n")
+			(d / ".SRCINFO").write_text(
+				f"pkgbase = {name}\n\tpkgver = {ver}\n\tpkgrel = 1\n"
+				f"\tpkgdesc = {name} desc\n\npkgname = {name}\n"
+			)
+		_git(self.src, "add", "-A")
+		_git(self.src, "commit", "-qm", "init")
+		patcher = mock.patch.object(
+			grimoire, "installed_package_set", return_value=set()
+		)
+		patcher.start()
+		self.addCleanup(patcher.stop)
+
+	def test_enumerates_root_packages(self) -> None:
+		results = grimoire.search_packages_repo(
+			f"file://{self.src}",
+			None,
+			None,
+			regex=None,
+			needle="",
+			limit=None,
+			source="FLAT",
+			dest_root=self.root / "dest",
+		)
+		by_name = {r.name: r for r in results}
+		self.assertEqual(set(by_name), {"foo", "bar"})
+		self.assertEqual(by_name["bar"].version, "2.0-1")
+		self.assertEqual(by_name["foo"].description, "foo desc")
+
+	def test_extra_branches_do_not_break_flat_detection(self) -> None:
+		# A flat repo may carry arch/variant branches (like archpower); the default
+		# ref still has the package dirs, so it stays flat -- not branch-per-package.
+		_git(self.src, "branch", "powerpc")
+		_git(self.src, "branch", "riscv64")
+		names = grimoire._repo_package_names(
+			f"file://{self.src}", None, None, self.root / "scratch"
+		)
+		self.assertEqual({n for n, _ in names}, {"foo", "bar"})
+
+
+class BranchPerPackageSearchTests(unittest.TestCase):
+	"""A repo whose default ref has no package dirs but one branch per package falls
+	back to ls-remote enumeration (offline file://)."""
+
+	def setUp(self) -> None:
+		tmp = tempfile.TemporaryDirectory()
+		self.addCleanup(tmp.cleanup)
+		self.root = Path(tmp.name)
+		self.src = self.root / "src"
+		self.src.mkdir()
+		_git(self.src, "init", "-q", "-b", "master")
+		(self.src / "README").write_text("index branch, packages live on branches\n")
+		_git(self.src, "add", "-A")
+		_git(self.src, "commit", "-qm", "readme")
+		for pkg in ("pkga", "pkgb"):
+			_git(self.src, "branch", pkg)
+
+	def test_falls_back_to_ls_remote(self) -> None:
+		names = grimoire._repo_package_names(
+			f"file://{self.src}", None, None, self.root / "scratch"
+		)
+		self.assertEqual({n for n, _ in names}, {"master", "pkga", "pkgb"})
+
+
 class CloneAnySourceTests(unittest.TestCase):
 	"""Cross-section fallback chain: try sources in order, first that clones a
 	PKGBUILD wins; clone failures and PKGBUILD-less containers are skipped."""

@@ -709,6 +709,27 @@ def _resolve_package_dir(clone_root: Path, subdir: str | None, package: str) -> 
 	return build_dir
 
 
+def _build_subpath(
+	package_dir: Path, ref: str, subdir: str | None, package: str
+) -> str | None:
+	# The subtree holding the PKGBUILD, for a sparse checkout: <subdir>/<pkg>, <subdir>,
+	# or <pkg> (flat). None means the PKGBUILD is at the build root (solo) -> whole tree.
+	def has(path: str) -> bool:
+		try:
+			out = run_command(
+				["git", "-C", str(package_dir), "ls-tree", "--name-only", ref, path],
+				capture=True,
+			)
+		except AurGitError:
+			return False
+		return bool(str(out).strip())
+
+	for cand in [f"{subdir}/{package}", subdir] if subdir else [package]:
+		if cand and has(f"{cand}/PKGBUILD"):
+			return cand
+	return None
+
+
 def _clone_with_fallback(
 	package_dir: Path,
 	candidates: Sequence[tuple[str, str | None, str | None]],
@@ -716,12 +737,15 @@ def _clone_with_fallback(
 ) -> Path:
 	# Try each (url, branch, subdir) mirror in order until one clones; the winning
 	# mirror's own subdir resolves the build dir. Used only for a fresh clone.
+	# Clone blobless + sparse so a monorepo (e.g. a flat distro repo) only downloads the
+	# target package's subtree; git transparently falls back to a full clone when the
+	# server can't filter, and a solo repo (PKGBUILD at the root) checks out whole.
 	errors: list[str] = []
 	for index, (url, branch, subdir) in enumerate(candidates):
 		remote_url = _remote_for(url)
 		if package_dir.exists():
 			shutil.rmtree(package_dir)
-		clone_cmd = ["git", "clone"]
+		clone_cmd = ["git", "clone", "--no-checkout", "--filter=blob:none"]
 		if SHALLOW_CLONE:
 			clone_cmd += ["--depth=1"]
 		clone_cmd += [remote_url, str(package_dir)]
@@ -730,7 +754,13 @@ def _clone_with_fallback(
 			run_command(clone_cmd)
 			if branch:
 				run_command(["git", "-C", str(package_dir), "fetch", "origin", branch])
-				_reset_git_worktree(package_dir, ("FETCH_HEAD",))
+			ref = "FETCH_HEAD" if branch else "HEAD"
+			want = _build_subpath(package_dir, ref, subdir, package)
+			if want:
+				run_command(
+					["git", "-C", str(package_dir), "sparse-checkout", "set", want]
+				)
+			_reset_git_worktree(package_dir, (ref,))
 			return _resolve_package_dir(package_dir, subdir, package)
 		except AurGitError as exc:
 			errors.append(f"{url}: {exc}")
@@ -2171,21 +2201,30 @@ def search_packages_git(
 def _repo_package_names(
 	repo_url: str, branch: str | None, subdir: str | None, clone_dir: Path
 ) -> list[tuple[str, Path | None]]:
-	# Enumerate a custom repo's packages -> (name, srcinfo_dir). Two layouts:
-	# subdir-container (one dir per package under <subdir>) needs a clone to list
-	# files; branch-per-package is read straight off `git ls-remote`. Templated
+	# Enumerate a custom repo's packages -> (name, srcinfo_dir). Layouts:
+	#   subdir-container : one dir per package under <subdir> (glob <subdir>/*/PKGBUILD).
+	#   flat            : one dir per package at the repo root (glob */PKGBUILD).
+	#   branch-per-package: one branch per package (read off `git ls-remote`).
+	# Clone the default (or --branch) ref and list its package dirs. If the working tree
+	# has none and no --subdir was given, fall back to branch-per-package via ls-remote.
+	# This distinguishes flat from branch-per-package by what the ref actually contains
+	# (head count can't: a flat repo may carry a few arch/variant branches). Templated
 	# ({pkg}) aliases have no index and are rejected by the caller.
 	remote = _remote_for(repo_url)
-	if subdir:
-		clone_cmd = ["git", "clone", "--depth=1"]
-		if branch:
-			clone_cmd += ["--branch", branch]
-		clone_cmd += [remote, str(clone_dir)]
-		run_command(clone_cmd)
-		base = clone_dir / subdir
-		if not base.is_dir():
-			raise AurGitError(f"Subdirectory '{subdir}' not found in {repo_url}")
-		return sorted((p.parent.name, p.parent) for p in base.glob("*/PKGBUILD"))
+	clone_cmd = ["git", "clone", "--depth=1"]
+	if branch:
+		clone_cmd += ["--branch", branch]
+	clone_cmd += [remote, str(clone_dir)]
+	run_command(clone_cmd)
+	base = clone_dir / subdir if subdir else clone_dir
+	if subdir and not base.is_dir():
+		raise AurGitError(f"Subdirectory '{subdir}' not found in {repo_url}")
+	names: list[tuple[str, Path | None]] = sorted(
+		(p.parent.name, p.parent) for p in base.glob("*/PKGBUILD")
+	)
+	if names or subdir:
+		return names
+	# Root carried no package dirs -> one branch per package.
 	output = run_command(["git", "ls-remote", "--heads", remote], capture=True)
 	return sorted({(name, None) for name in _lsremote_names(output)})
 
