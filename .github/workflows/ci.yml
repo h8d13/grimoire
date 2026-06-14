@@ -67,9 +67,9 @@ jobs:
 
       - name: Shallow clone is depth=1
         run: |
-          rm -rf ~/.cache/aurgit
+          rm -rf ~/.cache/grimaur
           ./grimaur --shallow fetch $PKG
-          count=$(git -C ~/.cache/aurgit/$PKG rev-list --count HEAD)
+          count=$(git -C ~/.cache/grimaur/$PKG rev-list --count HEAD)
           [ "$count" = "1" ]; echo "got $count, test pass." || { echo "expected 1, got $count"; exit 1; }
 
       - run: ./grimaur --git-mirror fetch --force $PKG
