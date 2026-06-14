@@ -78,19 +78,14 @@ packages resolve, including for a bare `update`.
 ### Stay Updated
 
 - `grimoire update` rebuilds every installed “foreign” package that has a newer release.
-   - Pass `--global` to update system first, then AUR packages
-   - Pass `--global --system-only` for equivalent of `-Syu`
-   - Pass `--global --index`, only sync package db `-Sy`
+   - Pass `--global` to update system first, then AUR packages.
 - `grimoire update <pkg1> <pkg2>` limits the update run to specific packages.
-- `grimoire update --devel` Update all *-git packages aswell (needed for grimoire-git for example).
+- `grimoire update --devel` Update all *-git packages aswell (needed for `grimoire-git` for example).
 - Combine with `--refresh` to force a fresh pull of every tracked package.
 
 ### Additional Options
 
 - Useful to build in `tmp/` pass `--dest-root` - (default: `$XDG_CACHE_HOME/grimoire` or `~/.cache/grimoire`)
-- For automating updates `grimoire update`:
-   - Pass `--global --download`, download updates without installing `-Syuw`
-   - Pass `--global --install`, to be used with command above `-Su`
 - Useful for scripting on top of `grimoire`:
    - `--no-color` disables colored terminal output
    - `grimoire search <term> --limit 10` limits results to the first N matches
@@ -111,6 +106,6 @@ packages resolve, including for a bare `update`.
 
 Made with ♡
 
-[Star this repo](https://github.com/mackilanu/grimoire) · [Bugs/Features](https://github.com/mackilanu/grimaur/issues/new) · [Discussions](https://github.com/mackilanu/grimoire/discussions)
+[Star this repo](https://github.com/mackilanu/grimoire) · [Bugs/Features](https://github.com/mackilanu/grimoire/issues/new) · [Discussions](https://github.com/mackilanu/grimoire/discussions)
 
 </div>

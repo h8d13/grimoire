@@ -9,12 +9,17 @@ line-length = 88
 extend-include = ["grimoire"]
 
 [tool.ruff.lint]
-select = ["E", "F", "B", "I", "UP", "W", "TC", "PERF", "S", "PLW", "SIM", "PTH", "RUF", "FURB", "A", "ISC"]
+select = ["E", "F", "B", "I", "UP", "W", "TC", "PERF", "S", "PLW", "SIM", "PTH", "RUF", "FURB", "A", "ISC", "C901"]
 ignore = [
     "E501",
     "W191",
     "PLW0603",  # global-statement: module-level config flags are intentional (cf. pylint W0603 disable)
 ]
+
+# Complexity ceiling as a ratchet: blocks new sprawl without forcing the small
+# functions to fragment. Only main is ignored since it dispatches all the program.
+[tool.ruff.lint.mccabe]
+max-complexity = 20
 
 [tool.ruff.lint.per-file-ignores]
 # Tests legitimately shell out to git/pacman with known, fixed argv.

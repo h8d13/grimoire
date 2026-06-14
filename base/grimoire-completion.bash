@@ -46,7 +46,7 @@ _grimoire_completion()
                 opts="$global_opts --noconfirm --clone --cache"
                 ;;
             update)
-                opts="$global_opts --noconfirm --devel --repo-url --repo --subdir --branch --global --system-only --index --download --install"
+                opts="$global_opts --noconfirm --devel --repo-url --repo --subdir --branch --global"
                 ;;
             search)
                 opts="$global_opts --limit --no-interactive --noconfirm --plain --repo-url --repo --subdir --branch"

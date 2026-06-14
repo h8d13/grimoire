@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-r"""grimoire: Fetch, inspect, search, list, update, and install, remove Arch Linux packages.
+r"""grimoire: Fetch, inspect, search, list, update, and install, remove.
 
-It natively speaks all things `makepkg`. And works outside of AUR.
+It natively speaks all things `makepkg`. And works outside of AUR using `git`.
 I.e: Private software colletions, Public organizations repositories, ...
 What is defined as VUR (Virtual User Repo).
 Or official Arch Linux packages from their Gitlab.
 
-grimoire can recursively resolve and install dependencies by building packages locally with
-makepkg. Official repository dependencies are installed with pacman when they are missing.
+Recursively resolve and install dependencies by building packages locally with makepkg.
+Official repository dependencies are installed with pacman when they are missing.
 
 	In a single truth python file.
 
@@ -144,8 +144,8 @@ SSH_REWRITE_HOSTS = {
 # Written on first use when no repos.conf exists. Default source is [ARCH] (build
 # official packages from source); the AUR is opt-in (commented out).
 _DEFAULT_REPOS_CONF = """\
-# Example grimoire config. Manage with `grimoire repo`. Top takes precedence.
-# In a URL, {pkg} = package name, {pkgbase} = its pkgbase (from the pacman sync DBs).
+# Example grimoire config. Manage with `grimoire repo`. Top takes precedence. Spaces do not matter.
+# Template support: {pkg} = package name, {pkgbase} = its pkgbase (Ie: amd-ucode -> linux-firmware)
 
 # Insert a custom repo here. An example can be found in the repo.
 
@@ -1681,6 +1681,94 @@ def build_and_install(
 	invalidate_installed_cache()
 
 
+def _acquire_clone_and_info(
+	package: str,
+	dest_root: Path,
+	*,
+	refresh: bool,
+	repo_url: str | None,
+	branch: str | None,
+	subdir: str | None,
+	repo_fallbacks: list[tuple[str, str | None, str | None]] | None,
+	sources: Sequence[
+		tuple[
+			str | None, str | None, str | None, list[tuple[str, str | None, str | None]]
+		]
+	]
+	| None,
+) -> tuple[Path | None, dict[str, object] | None]:
+	# Resolve where to build from: a source chain or custom URL clones immediately;
+	# the AUR-RPC path defers cloning and returns metadata instead. Returns
+	# (package_dir or None, rpc_info or None).
+	if sources is not None:
+		return _clone_any_source(package, dest_root, sources, refresh=refresh), None
+	if repo_url:
+		return (
+			ensure_clone(
+				package,
+				dest_root,
+				refresh=refresh,
+				repo_url=repo_url,
+				branch=branch,
+				subdir=subdir,
+				repo_fallbacks=repo_fallbacks,
+			),
+			None,
+		)
+	if USE_AUR_RPC:
+		info = aur_rpc_info(package)
+		if info is None:
+			raise AurGitError(f"Package '{package}' not found via AUR RPC")
+		return None, info
+	return None, None
+
+
+def _classify_build_deps(
+	deps: DependencySet, package: str
+) -> tuple[set[str], set[str], set[str], dict[str, set[str]]]:
+	# Sort each build dep into already-satisfied (dropped), official, AUR (with the
+	# virtual-provider it satisfies), or unresolved.
+	missing_official: set[str] = set()
+	aur_dependencies: set[str] = set()
+	unresolved: set[str] = set()
+	virtual_providers: dict[str, set[str]] = {}
+	for dep in sorted(deps.all_build_deps):
+		if dep == package or is_dependency_satisfied(dep):
+			continue
+		provider = resolve_official_dependency(dep)
+		if provider:
+			missing_official.add(provider)
+			continue
+		aur_provider = resolve_aur_dependency(dep)
+		if aur_provider:
+			aur_dependencies.add(aur_provider)
+			if aur_provider != dep:
+				virtual_providers.setdefault(aur_provider, set()).add(dep)
+			continue
+		if _pacman_returns_zero(["pacman", "-Sp", dep]):
+			missing_official.add(dep)
+			continue
+		unresolved.add(dep)
+	return missing_official, aur_dependencies, unresolved, virtual_providers
+
+
+def _confirm_aur_dependencies(
+	aur_dependencies: set[str], virtual_providers: dict[str, set[str]]
+) -> None:
+	# List the AUR deps about to be built and abort the install if the user declines.
+	print(style("The following AUR dependencies are required:", CYAN))
+	for dep_pkg in sorted(aur_dependencies):
+		provides = virtual_providers.get(dep_pkg)
+		if provides:
+			print(f"  {dep_pkg} (provides {', '.join(sorted(provides))})")
+		else:
+			print(f"  {dep_pkg}")
+	if not prompt_confirm(
+		style("Proceed with building these dependencies? [y/N]: ", YELLOW)
+	):
+		raise AurGitError("Installation aborted by user")
+
+
 def install_package(
 	package: str,
 	dest_root: Path,
@@ -1723,27 +1811,16 @@ def install_package(
 	if preinstalled_official is None:
 		preinstalled_official = set()
 
-	package_dir: Path | None = None
-	info: dict[str, object] | None = None
-	if sources is not None:
-		# Multi-source chain: clone from the first source that has the package, then
-		# read deps from its .SRCINFO (no AUR RPC enrichment in the merged path).
-		package_dir = _clone_any_source(package, dest_root, sources, refresh=refresh)
-	elif repo_url:
-		# Skip AUR RPC when using a custom repo URL.
-		package_dir = ensure_clone(
-			package,
-			dest_root,
-			refresh=refresh,
-			repo_url=repo_url,
-			branch=branch,
-			subdir=subdir,
-			repo_fallbacks=repo_fallbacks,
-		)
-	elif USE_AUR_RPC:
-		info = aur_rpc_info(package)
-		if info is None and USE_AUR_RPC:
-			raise AurGitError(f"Package '{package}' not found via AUR RPC")
+	package_dir, info = _acquire_clone_and_info(
+		package,
+		dest_root,
+		refresh=refresh,
+		repo_url=repo_url,
+		branch=branch,
+		subdir=subdir,
+		repo_fallbacks=repo_fallbacks,
+		sources=sources,
+	)
 	if info:
 		pkgdesc = (
 			info.get("Description")
@@ -1762,36 +1839,12 @@ def install_package(
 				subdir=subdir,
 				repo_fallbacks=repo_fallbacks,
 			)
-		srcinfo = read_srcinfo(package_dir)
-		_, pkgdesc, deps = parse_dependencies(srcinfo)
-	if pkgdesc:
-		print(f"==> {package}: {pkgdesc}")
-	else:
-		print(f"==> {package}")
+		_, pkgdesc, deps = parse_dependencies(read_srcinfo(package_dir))
+	print(f"==> {package}: {pkgdesc}" if pkgdesc else f"==> {package}")
 
-	missing_official: set[str] = set()
-	aur_dependencies: set[str] = set()
-	unresolved: set[str] = set()
-	virtual_providers: dict[str, set[str]] = {}
-	for dep in sorted(deps.all_build_deps):
-		if dep == package:
-			continue
-		if is_dependency_satisfied(dep):
-			continue
-		provider = resolve_official_dependency(dep)
-		if provider:
-			missing_official.add(provider)
-			continue
-		aur_provider = resolve_aur_dependency(dep)
-		if aur_provider:
-			aur_dependencies.add(aur_provider)
-			if aur_provider != dep:
-				virtual_providers.setdefault(aur_provider, set()).add(dep)
-			continue
-		if _pacman_returns_zero(["pacman", "-Sp", dep]):
-			missing_official.add(dep)
-			continue
-		unresolved.add(dep)
+	missing_official, aur_dependencies, unresolved, virtual_providers = (
+		_classify_build_deps(deps, package)
+	)
 
 	if unresolved:
 		missing_list = ", ".join(sorted(unresolved))
@@ -1804,18 +1857,7 @@ def install_package(
 			preinstalled_official.update(to_install)
 
 	if aur_dependencies and not noconfirm:
-		print(style("The following AUR dependencies are required:", CYAN))
-		for dep_pkg in sorted(aur_dependencies):
-			provides = virtual_providers.get(dep_pkg)
-			if provides:
-				provides_label = ", ".join(sorted(provides))
-				print(f"  {dep_pkg} (provides {provides_label})")
-			else:
-				print(f"  {dep_pkg}")
-		if not prompt_confirm(
-			style("Proceed with building these dependencies? [y/N]: ", YELLOW)
-		):
-			raise AurGitError("Installation aborted by user")
+		_confirm_aur_dependencies(aur_dependencies, virtual_providers)
 
 	for aur_dep in sorted(aur_dependencies):
 		install_package(
@@ -1903,199 +1945,224 @@ def get_ignored_packages() -> set[str]:
 	return ignored
 
 
-def update_packages(
+def _resolve_update_spec(
+	package: str,
+	alias: str | None,
+	url: str | None,
+	branch: str | None,
+	subdir: str | None,
+) -> tuple[
+	str | None, str | None, str | None, list[tuple[str, str | None, str | None]]
+]:
+	# "AUR" section (or the no-conf default) is the built-in AUR backend: a None
+	# repo_url, never run through the alias/URL parser.
+	if alias == "AUR" or (alias is None and url is None):
+		return None, None, None, []
+	return _resolve_repo_for_package(
+		package, alias=alias, repo_url=url, branch=branch, subdir=subdir
+	)
+
+
+def _probe_aur_update(
+	package: str, dest_root: Path
+) -> tuple[str | None, str | None, str | None] | None:
+	# (remote_version, remote_head, local_head) from the AUR, or None if absent.
+	meta = git_srcinfo_metadata(package)
+	rv = meta[0] if meta else None
+	if rv and is_vcs_package(package):
+		rv = None
+	if rv is not None:
+		return rv, None, None
+	rh = get_remote_head(package)
+	if rh is None:
+		return None
+	return None, rh, get_local_head(dest_root / package)
+
+
+def _probe_git_update(
+	package: str,
+	dest_root: Path,
+	source: tuple[
+		str, str | None, str | None, list[tuple[str, str | None, str | None]]
+	],
+	*,
+	refresh: bool,
+) -> tuple[str | None, str | None, str | None] | None:
+	# As _probe_aur_update, against a git source: VCS pkgs compare the remote head,
+	# versioned pkgs clone and read the .SRCINFO (no metadata API on a plain git host).
+	s_url, s_branch, s_subdir, s_fallbacks = source
+	if is_vcs_package(package):
+		rh = _git_remote_head(s_url, s_branch)
+		if rh is None:
+			return None
+		return None, rh, get_local_head(dest_root / package)
+	try:
+		pkg_dir = ensure_clone(
+			package,
+			dest_root,
+			refresh=refresh,
+			repo_url=s_url,
+			branch=s_branch,
+			subdir=s_subdir,
+			repo_fallbacks=s_fallbacks,
+		)
+	except AurGitError:
+		return None
+	if not (pkg_dir / "PKGBUILD").is_file():
+		return None
+	rv = _parse_srcinfo_metadata(read_srcinfo(pkg_dir))[0]
+	return (rv, None, None) if rv is not None else None
+
+
+def _find_update_source(
+	package: str,
+	update_specs: list[tuple[str | None, str | None]],
 	dest_root: Path,
 	*,
 	refresh: bool,
-	noconfirm: bool,
-	update_system: bool,
-	include_devel: bool,
-	targets: Sequence[str] | None = None,
-	index_only: bool = False,
-	download_only: bool = False,
-	install_only: bool = False,
-	system_only: bool = False,
-	repo: str | None = None,
-	repo_url: str | None = None,
-	branch: str | None = None,
-	subdir: str | None = None,
-) -> None:
-	ignored = get_ignored_packages()
-
-	if update_system:
-		if install_only:
-			cmd: list[str] = ["pacman", "-Su"]
+	branch: str | None,
+	subdir: str | None,
+) -> tuple[
+	tuple[str | None, str | None, str | None, list[tuple[str, str | None, str | None]]],
+	tuple[str | None, str | None, str | None],
+]:
+	# Walk the source chain (conf order == precedence); return (winning source, probe)
+	# for the first source that has the package, or raise LookupError if none does.
+	for alias, url in update_specs:
+		source = _resolve_update_spec(package, alias, url, branch, subdir)
+		s_url = source[0]
+		if s_url is None:
+			probe = _probe_aur_update(package, dest_root)
 		else:
-			cmd = ["pacman", "-Sy"]
-			if download_only:
-				cmd[1] += "uw"
-			elif not index_only:
-				cmd[1] += "u"
+			git_source = (s_url, source[1], source[2], source[3])
+			probe = _probe_git_update(package, dest_root, git_source, refresh=refresh)
+		if probe is not None:
+			return source, probe
+	raise LookupError(package)
 
-		if noconfirm:
-			cmd.append("--noconfirm")
 
-		print(style("Updating system packages first...", CYAN))
-		try:
-			run_command(_elevate(cmd))
-			invalidate_installed_cache()
-		except AurGitError as exc:
-			print(f"System update failed: {exc}", file=sys.stderr)
-			if not noconfirm and not prompt_confirm(
-				style("Continue with AUR updates? [y/N]: ", YELLOW)
-			):
-				return
+def _run_system_update(*, noconfirm: bool) -> bool:
+	# Run the pacman half of `update --global` (-Syu). Returns False when the caller
+	# should stop: the user declined to continue after a failed system update.
+	cmd = ["pacman", "-Syu"]
+	if noconfirm:
+		cmd.append("--noconfirm")
 
-		if download_only:
-			print(
-				style(
-					"WARNING: System packages downloaded but not installed (partial update state).",
-					YELLOW,
-				)
-			)
-			print(
-				style(
-					f"Run 'grimoire update --global --install' or '{_get_elev()} pacman -Su' to install them.",
-					YELLOW,
-				)
-			)
+	print(style("Updating system packages first...", CYAN))
+	try:
+		run_command(_elevate(cmd))
+		invalidate_installed_cache()
+	except AurGitError as exc:
+		print(f"System update failed: {exc}", file=sys.stderr)
+		if not noconfirm and not prompt_confirm(
+			style("Continue with AUR updates? [y/N]: ", YELLOW)
+		):
+			return False
 
-		if system_only:
-			return
+	return True
 
-	candidates: list[tuple[str, str | None]]
+
+def _collect_update_candidates(
+	targets: Sequence[str] | None,
+) -> list[tuple[str, str | None]] | None:
+	# (name, installed_version) for each package to check. None when there is nothing
+	# to do (no foreign packages), already reported.
 	if targets:
 		seen: set[str] = set()
-		candidates = []
+		out: list[tuple[str, str | None]] = []
 		for pkg in targets:
-			if pkg in seen:
-				continue
-			seen.add(pkg)
-			candidates.append((pkg, get_installed_version(pkg)))
-	else:
-		foreign = list_foreign_packages()
-		if not foreign:
-			print("No foreign packages reported by pacman -Qm")
-			return
-		candidates = list(foreign.items())
+			if pkg not in seen:
+				seen.add(pkg)
+				out.append((pkg, get_installed_version(pkg)))
+		return out
+	foreign = list_foreign_packages()
+	if not foreign:
+		print("No foreign packages reported by pacman -Qm")
+		return None
+	return list(foreign.items())
 
-	missing: list[str] = []
-	pending_updates: list[UpdateCandidate] = []
-	skip_devel = not include_devel and not targets
-	# Version-check each package against an ordered source chain (conf order ==
-	# precedence): an explicit --repo/--repo-url is the only source, otherwise every
-	# repos.conf section top to bottom, with the AUR backend as the section named "AUR"
-	# (or the implicit source when there is no conf). The first source that has the
-	# package decides its update and is reused for the rebuild; packages no source
-	# carries fall to `missing`. Per source: VCS pkgs compare git head, versioned pkgs
-	# read the .SRCINFO (cloned, since a plain git host has no metadata API).
+
+def _update_target_label(candidate: UpdateCandidate) -> str:
+	# Human/`update_to` label for the version a candidate moves to.
+	if candidate.target_version:
+		return candidate.target_version
+	if candidate.remote_head:
+		return candidate.remote_head[:7]
+	return "newer"
+
+
+def _update_source_label(
+	repo: str | None,
+	repo_url: str | None,
+	update_specs: list[tuple[str | None, str | None]],
+) -> str:
+	# What to call the source(s) in "not available via ..." notes.
 	if repo or repo_url:
-		update_specs: list[tuple[str | None, str | None]] = [(repo, repo_url)]
-	else:
-		update_specs = [(name, None) for name in load_repo_registry()] or [(None, None)]
-	# Per-package winning source, reused verbatim for the rebuild below.
-	winning_source: dict[
+		return f"repo '{repo}'" if repo else "the custom repo"
+	if update_specs in ([(None, None)], [("AUR", None)]):
+		return "AUR RPC" if USE_AUR_RPC else "AUR mirror"
+	return "any configured source"
+
+
+def _plan_updates(
+	candidates: list[tuple[str, str | None]],
+	update_specs: list[tuple[str | None, str | None]],
+	dest_root: Path,
+	*,
+	ignored: set[str],
+	skip_devel: bool,
+	refresh: bool,
+	branch: str | None,
+	subdir: str | None,
+) -> tuple[
+	list[UpdateCandidate],
+	dict[
+		str,
+		tuple[
+			str | None, str | None, str | None, list[tuple[str, str | None, str | None]]
+		],
+	],
+	list[str],
+]:
+	# Resolve each candidate against the source chain and keep the ones with a newer
+	# version/head. Returns (pending, winning-source-per-package, not-found).
+	pending: list[UpdateCandidate] = []
+	winning: dict[
 		str,
 		tuple[
 			str | None, str | None, str | None, list[tuple[str, str | None, str | None]]
 		],
 	] = {}
-
-	def _resolve_spec(
-		package: str, alias: str | None, url: str | None
-	) -> tuple[
-		str | None, str | None, str | None, list[tuple[str, str | None, str | None]]
-	]:
-		# "AUR" section (or the no-conf default) is the built-in AUR backend: a None
-		# repo_url, never run through the alias/URL parser.
-		if alias == "AUR" or (alias is None and url is None):
-			return None, None, None, []
-		return _resolve_repo_for_package(
-			package, alias=alias, repo_url=url, branch=branch, subdir=subdir
-		)
-
-	def _probe_aur(package: str) -> tuple[str | None, str | None, str | None] | None:
-		meta = git_srcinfo_metadata(package)
-		rv = meta[0] if meta else None
-		if rv and is_vcs_package(package):
-			rv = None
-		if rv is not None:
-			return rv, None, None
-		rh = get_remote_head(package)
-		if rh is None:
-			return None
-		return None, rh, get_local_head(dest_root / package)
-
-	def _probe_git(
-		package: str,
-		s_url: str,
-		s_branch: str | None,
-		s_subdir: str | None,
-		s_fallbacks: list[tuple[str, str | None, str | None]],
-	) -> tuple[str | None, str | None, str | None] | None:
-		if is_vcs_package(package):
-			rh = _git_remote_head(s_url, s_branch)
-			if rh is None:
-				return None
-			return None, rh, get_local_head(dest_root / package)
-		try:
-			pkg_dir = ensure_clone(
-				package,
-				dest_root,
-				refresh=refresh,
-				repo_url=s_url,
-				branch=s_branch,
-				subdir=s_subdir,
-				repo_fallbacks=s_fallbacks,
-			)
-		except AurGitError:
-			return None
-		if not (pkg_dir / "PKGBUILD").is_file():
-			return None
-		rv = _parse_srcinfo_metadata(read_srcinfo(pkg_dir))[0]
-		return (rv, None, None) if rv is not None else None
-
+	missing: list[str] = []
 	for package, installed_version in candidates:
 		if is_debug_package(package):
 			continue
-		# Skip ignored packages
 		if package in ignored:
 			print(f"Skipping {package} (in IgnorePkg)", file=sys.stderr)
 			continue
 		if skip_devel and is_vcs_package(package):
 			continue
-
-		remote_version: str | None = None
-		remote_head: str | None = None
-		local_head: str | None = None
-		found = False
-		for alias, url in update_specs:
-			s_url, s_branch, s_subdir, s_fallbacks = _resolve_spec(package, alias, url)
-			if s_url is None:
-				probe = _probe_aur(package)
-			else:
-				probe = _probe_git(package, s_url, s_branch, s_subdir, s_fallbacks)
-			if probe is None:
-				continue
-			remote_version, remote_head, local_head = probe
-			winning_source[package] = (s_url, s_branch, s_subdir, s_fallbacks)
-			found = True
-			break
-		if not found:
+		try:
+			source, (remote_version, remote_head, local_head) = _find_update_source(
+				package,
+				update_specs,
+				dest_root,
+				refresh=refresh,
+				branch=branch,
+				subdir=subdir,
+			)
+		except LookupError:
 			missing.append(package)
 			continue
-
+		winning[package] = source
 		if installed_version and remote_version and installed_version == remote_version:
 			continue
-
 		if remote_head:
-			package_dir = dest_root / package
 			if local_head is None:
-				local_head = get_local_head(package_dir)
+				local_head = get_local_head(dest_root / package)
 			if local_head and local_head == remote_head:
 				continue
-
-		pending_updates.append(
+		pending.append(
 			UpdateCandidate(
 				name=package,
 				installed_version=installed_version,
@@ -2104,50 +2171,27 @@ def update_packages(
 				local_head=local_head,
 			)
 		)
+	return pending, winning, missing
 
-	if repo or repo_url:
-		source_label = f"repo '{repo}'" if repo else "the custom repo"
-	elif update_specs in ([(None, None)], [("AUR", None)]):
-		source_label = "AUR RPC" if USE_AUR_RPC else "AUR mirror"
-	else:
-		source_label = "any configured source"
 
-	if not pending_updates:
-		print("All packages are up to date.")
-		for package in missing:
-			print(
-				f"note: {package} is not available via {source_label}",
-				file=sys.stderr,
-			)
-		return
-
-	for index, candidate in enumerate(pending_updates, start=1):
-		from_version = candidate.installed_version or "?"
-		if candidate.target_version:
-			to_version = candidate.target_version
-		elif candidate.remote_head:
-			to_version = candidate.remote_head[:7]
-		else:
-			to_version = "unknown"
-		print(f"{index}) {candidate.name} {from_version} -> {to_version}")
-
-	interactive = sys.stdin.isatty() and sys.stdout.isatty()
-	if interactive:
-		selected_candidates = interactive_select_updates(pending_updates)
-		if not selected_candidates:
-			return
-	else:
-		selected_candidates = pending_updates
-
+def _rebuild_updates(
+	selected: list[UpdateCandidate],
+	winning_source: dict[
+		str,
+		tuple[
+			str | None, str | None, str | None, list[tuple[str, str | None, str | None]]
+		],
+	],
+	dest_root: Path,
+	*,
+	refresh: bool,
+	noconfirm: bool,
+) -> None:
+	# Rebuild each selected package from the source it was found in, sharing dedup and
+	# official-dep state across the run.
 	shared_visited: set[str] = set()
 	shared_preinstalled_official: set[str] = set()
-	for candidate in selected_candidates:
-		if candidate.target_version:
-			update_to = candidate.target_version
-		elif candidate.remote_head:
-			update_to = candidate.remote_head[:7]
-		else:
-			update_to = "newer"
+	for candidate in selected:
 		r_url, r_branch, r_subdir, r_fallbacks = winning_source.get(
 			candidate.name, (None, None, None, [])
 		)
@@ -2163,15 +2207,91 @@ def update_packages(
 				branch=r_branch,
 				subdir=r_subdir,
 				repo_fallbacks=r_fallbacks,
-				update_to=update_to,
+				update_to=_update_target_label(candidate),
 			)
 		except AurGitError as exc:
 			print(f"error updating {candidate.name}: {exc}", file=sys.stderr)
 
+
+def _print_missing_notes(missing: list[str], source_label: str) -> None:
 	for package in missing:
 		if is_debug_package(package):
 			continue
 		print(f"note: {package} is not available via {source_label}", file=sys.stderr)
+
+
+def update_packages(
+	dest_root: Path,
+	*,
+	refresh: bool,
+	noconfirm: bool,
+	update_system: bool,
+	include_devel: bool,
+	targets: Sequence[str] | None = None,
+	repo: str | None = None,
+	repo_url: str | None = None,
+	branch: str | None = None,
+	subdir: str | None = None,
+) -> None:
+	ignored = get_ignored_packages()
+
+	if update_system and not _run_system_update(noconfirm=noconfirm):
+		return
+
+	candidates = _collect_update_candidates(targets)
+	if candidates is None:
+		return
+
+	# Version-check each package against an ordered source chain (conf order ==
+	# precedence): an explicit --repo/--repo-url is the only source, otherwise every
+	# repos.conf section top to bottom, with the AUR backend as the section named "AUR"
+	# (or the implicit source when there is no conf). The first source that has the
+	# package decides its update and is reused for the rebuild; packages no source
+	# carries fall to `missing`.
+	if repo or repo_url:
+		update_specs: list[tuple[str | None, str | None]] = [(repo, repo_url)]
+	else:
+		update_specs = [(name, None) for name in load_repo_registry()] or [(None, None)]
+
+	pending_updates, winning_source, missing = _plan_updates(
+		candidates,
+		update_specs,
+		dest_root,
+		ignored=ignored,
+		skip_devel=not include_devel and not targets,
+		refresh=refresh,
+		branch=branch,
+		subdir=subdir,
+	)
+	source_label = _update_source_label(repo, repo_url, update_specs)
+
+	if not pending_updates:
+		print("All packages are up to date.")
+		_print_missing_notes(missing, source_label)
+		return
+
+	for index, candidate in enumerate(pending_updates, start=1):
+		from_version = candidate.installed_version or "?"
+		print(
+			f"{index}) {candidate.name} {from_version} -> {_update_target_label(candidate)}"
+		)
+
+	interactive = sys.stdin.isatty() and sys.stdout.isatty()
+	if interactive:
+		selected_candidates = interactive_select_updates(pending_updates)
+		if not selected_candidates:
+			return
+	else:
+		selected_candidates = pending_updates
+
+	_rebuild_updates(
+		selected_candidates,
+		winning_source,
+		dest_root,
+		refresh=refresh,
+		noconfirm=noconfirm,
+	)
+	_print_missing_notes(missing, source_label)
 
 
 def search_packages(
@@ -3087,28 +3207,7 @@ def build_parser() -> argparse.ArgumentParser:
 	update_parser.add_argument(
 		"--global",
 		action="store_true",
-		help="Update official repositories with pacman -Syu before updating AUR packages",
-	)
-	global_group = update_parser.add_mutually_exclusive_group()
-	update_parser.add_argument(
-		"--system-only",
-		action="store_true",
-		help="With --global, only update system packages and skip AUR updates",
-	)
-	global_group.add_argument(
-		"--index",
-		action="store_true",
-		help="With --global, only sync package databases (pacman -Sy)",
-	)
-	global_group.add_argument(
-		"--download",
-		action="store_true",
-		help="With --global, download updates without installing (pacman -Syuw)",
-	)
-	global_group.add_argument(
-		"--install",
-		action="store_true",
-		help="With --global, install already-downloaded packages (pacman -Su)",
+		help="Update system packages (pacman -Syu) before updating AUR packages",
 	)
 	search_parser = subparsers.add_parser(
 		"search", help="Search packages via the configured backend"
@@ -3375,7 +3474,7 @@ def _clone_any_source(
 	)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901  argparse command dispatch
 	argv_list = list(argv if argv is not None else sys.argv[1:])
 	commands = {
 		"fetch",
@@ -3586,10 +3685,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 				include_devel=bool(getattr(args, "devel", False)),
 				update_system=bool(getattr(args, "global", False)),
 				targets=args.packages or None,
-				system_only=bool(getattr(args, "system_only", False)),
-				index_only=bool(getattr(args, "index", False)),
-				download_only=bool(getattr(args, "download", False)),
-				install_only=bool(getattr(args, "install", False)),
 				repo=getattr(args, "repo", None),
 				repo_url=getattr(args, "repo_url", None),
 				branch=getattr(args, "branch", None),

@@ -77,11 +77,7 @@ _grimoire() {
                         $source_opts \
                         '--noconfirm[Skip confirmation prompts]' \
                         '--devel[Include VCS/devel packages]' \
-                        '--global[Update official repositories first]' \
-                        '--system-only[With --global, skip AUR updates]' \
-                        '--index[With --global, only sync databases]' \
-                        '--download[With --global, download without installing]' \
-                        '--install[With --global, install downloaded updates]' \
+                        '--global[Update system packages first]' \
                         '*:packages:_grimoire_foreign_packages'
                     ;;
                 search)

@@ -62,11 +62,7 @@ complete -c grimoire -n '__fish_seen_subcommand_from remove' -l cache -d 'Remove
 
 # update
 complete -c grimoire -n '__fish_seen_subcommand_from update' -l devel -d 'Include VCS/devel packages'
-complete -c grimoire -n '__fish_seen_subcommand_from update' -l global -d 'Update official repositories first'
-complete -c grimoire -n '__fish_seen_subcommand_from update' -l system-only -d 'With --global, skip AUR updates'
-complete -c grimoire -n '__fish_seen_subcommand_from update' -l index -d 'With --global, only sync databases'
-complete -c grimoire -n '__fish_seen_subcommand_from update' -l download -d 'With --global, download without installing'
-complete -c grimoire -n '__fish_seen_subcommand_from update' -l install -d 'With --global, install downloaded updates'
+complete -c grimoire -n '__fish_seen_subcommand_from update' -l global -d 'Update system packages first'
 
 # search
 complete -c grimoire -n '__fish_seen_subcommand_from search' -l limit -x -a '10 20 50 100' -d 'Limit results'
