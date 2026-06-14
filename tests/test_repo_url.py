@@ -1,0 +1,171 @@
+"""Unit tests for --repo-url subdir/branch handling: forge URL parsing,
+build-dir resolution, and arg precedence."""
+
+import argparse
+import tempfile
+import unittest
+from pathlib import Path
+
+from grimaurshim import grimaur
+
+# Real archinstoo URLs (kept here, not in the README): a nested package whose
+# PKGBUILD lives in a subdir, pinned by branch and by commit.
+ARCHINSTOO_TREE = "https://github.com/h8d13/archinstoo/tree/master/archinstoo"
+ARCHINSTOO_COMMIT = (
+	"https://github.com/h8d13/archinstoo/tree/"
+	"00dede458e8a8884bd16723bf750ac21edadd3ca/archinstoo"
+)
+
+PARSE_CASES = {
+	# (clone_url, ref, subdir)
+	ARCHINSTOO_TREE: (
+		"https://github.com/h8d13/archinstoo.git",
+		"master",
+		"archinstoo",
+	),
+	ARCHINSTOO_COMMIT: (
+		"https://github.com/h8d13/archinstoo.git",
+		"00dede458e8a8884bd16723bf750ac21edadd3ca",
+		"archinstoo",
+	),
+	# blob (file view) is accepted like tree; trailing slash ignored
+	"https://github.com/o/r/blob/master/pkg/": (
+		"https://github.com/o/r.git",
+		"master",
+		"pkg",
+	),
+	# a link straight to the PKGBUILD trims down to its directory
+	"https://github.com/o/r/blob/master/pkg/PKGBUILD": (
+		"https://github.com/o/r.git",
+		"master",
+		"pkg",
+	),
+	# PKGBUILD at the repo root -> no subdir
+	"https://github.com/o/r/blob/master/PKGBUILD": (
+		"https://github.com/o/r.git",
+		"master",
+		None,
+	),
+	# nested subpath preserved
+	"https://github.com/o/r/tree/main/a/b/c": (
+		"https://github.com/o/r.git",
+		"main",
+		"a/b/c",
+	),
+	# GitLab uses /-/tree and /-/blob
+	"https://gitlab.com/o/r/-/tree/main/pkg/foo": (
+		"https://gitlab.com/o/r.git",
+		"main",
+		"pkg/foo",
+	),
+	"https://gitlab.com/o/r/-/blob/main/pkg/PKGBUILD": (
+		"https://gitlab.com/o/r.git",
+		"main",
+		"pkg",
+	),
+	# Gitea/Codeberg use /src/{branch,tag,commit}
+	"https://codeberg.org/o/r/src/branch/dev/aur/bar": (
+		"https://codeberg.org/o/r.git",
+		"dev",
+		"aur/bar",
+	),
+	"https://codeberg.org/o/r/src/tag/v1.0/pkg": (
+		"https://codeberg.org/o/r.git",
+		"v1.0",
+		"pkg",
+	),
+	"https://codeberg.org/o/r/src/commit/" + "a" * 40 + "/pkg": (
+		"https://codeberg.org/o/r.git",
+		"a" * 40,
+		"pkg",
+	),
+}
+
+# URLs with no recognizable directory marker pass through untouched.
+PASSTHROUGH = [
+	"https://github.com/o/r.git",
+	"https://github.com/o/r",
+	"https://aur.archlinux.org/brave-bin.git",
+	"git@github.com:o/r.git",
+	"ssh://aur@aur.archlinux.org/some-pkg.git",
+]
+
+
+class ParseRepoUrlTests(unittest.TestCase):
+	def test_forge_urls_split_into_clone_ref_subdir(self) -> None:
+		for url, expected in PARSE_CASES.items():
+			with self.subTest(url=url):
+				self.assertEqual(grimaur.parse_repo_url(url), expected)
+
+	def test_plain_urls_pass_through_unchanged(self) -> None:
+		for url in PASSTHROUGH:
+			with self.subTest(url=url):
+				self.assertEqual(grimaur.parse_repo_url(url), (url, None, None))
+
+	def test_slash_branch_is_misparsed_without_explicit_flags(self) -> None:
+		# A branch name with a slash can't be told apart from the subpath, so the
+		# first segment becomes the ref and the rest the subdir. Documents why
+		# --branch/--subdir override exists.
+		self.assertEqual(
+			grimaur.parse_repo_url("https://github.com/o/r/tree/feature/x/pkg"),
+			("https://github.com/o/r.git", "feature", "x/pkg"),
+		)
+
+
+class ResolveBuildDirTests(unittest.TestCase):
+	def setUp(self) -> None:
+		tmp = tempfile.TemporaryDirectory()
+		self.addCleanup(tmp.cleanup)
+		self.root = Path(tmp.name)
+		(self.root / "pkg").mkdir()
+
+	def test_none_subdir_returns_clone_root(self) -> None:
+		self.assertEqual(grimaur._resolve_build_dir(self.root, None), self.root)
+
+	def test_existing_subdir_returns_nested_path(self) -> None:
+		self.assertEqual(
+			grimaur._resolve_build_dir(self.root, "pkg"), self.root / "pkg"
+		)
+
+	def test_missing_subdir_raises(self) -> None:
+		with self.assertRaises(grimaur.AurGitError):
+			grimaur._resolve_build_dir(self.root, "nope")
+
+	def test_traversal_escaping_clone_root_raises(self) -> None:
+		with self.assertRaises(grimaur.AurGitError):
+			grimaur._resolve_build_dir(self.root, "../escape")
+
+
+class ResolveRepoTargetTests(unittest.TestCase):
+	def test_tree_url_fills_ref_and_subdir(self) -> None:
+		args = argparse.Namespace(repo_url=ARCHINSTOO_TREE, branch=None, subdir=None)
+		self.assertEqual(
+			grimaur._resolve_repo_target(args),
+			("https://github.com/h8d13/archinstoo.git", "master", "archinstoo"),
+		)
+
+	def test_explicit_flags_override_parsed(self) -> None:
+		args = argparse.Namespace(
+			repo_url=ARCHINSTOO_TREE, branch="dev", subdir="other"
+		)
+		self.assertEqual(
+			grimaur._resolve_repo_target(args),
+			("https://github.com/h8d13/archinstoo.git", "dev", "other"),
+		)
+
+	def test_plain_repo_url_untouched(self) -> None:
+		args = argparse.Namespace(
+			repo_url="https://github.com/o/r.git", branch=None, subdir=None
+		)
+		self.assertEqual(
+			grimaur._resolve_repo_target(args),
+			("https://github.com/o/r.git", None, None),
+		)
+
+	def test_no_repo_url_returns_none(self) -> None:
+		args = argparse.Namespace(repo_url=None, branch=None, subdir=None)
+		self.assertEqual(grimaur._resolve_repo_target(args), (None, None, None))
+
+
+if __name__ == "__main__":
+	unittest.main()

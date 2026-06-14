@@ -3,8 +3,8 @@
 <img align="left" src="./base/assets/grimoire_d.svg#gh-light-mode-only" width="80" alt="grimaur logo">
 <img align="left" src="./base/assets/grimoire_l.svg#gh-dark-mode-only" width="80" alt="grimaur logo">
 
-`grimaur` is a lightweight AUR helper that searches, builds, and updates AUR packages. It uses the AUR RPC
-API and **automatically falls back to the official git mirror when the endpoint is unavailable.**
+`grimaur` is a lightweight AUR helper that searches, builds, and updates AUR packages.
+It uses the AUR RPC API and **automatically falls back to the official git mirror.**
 <br clear="left">
 ## Install
 
@@ -20,15 +20,17 @@ API and **automatically falls back to the official git mirror when the endpoint 
    ```
 
 >[!TIP]
-> You can use `grimaur fetch <package>` to inspect `PKGBUILD` and source code before manually installing using `makepkg` or similar.
+> You can use `grimaur fetch <package>` to inspect `PKGBUILD` and source code before
+> manually installing using `makepkg` or similar.
 
-Even see it directly: `python grimaur inspect brave-bin --target PKGBUILD` Also accepts: `SRCINFO`
+Even see it directly: `python grimaur inspect brave-bin --target PKGBUILD`
+Also accepts: `SRCINFO`
 
 ## Usage
 ### Search Packages
-- `grimaur <term>` (or `grimaur search <term>`) lists matching packages and lets you pick one to install.
+- `grimaur <term>` (or `grimaur search <term>`) lists matching packages.
    - Regex `"pattern-*"` automatically uses git mirror
-   - Pass `--git-mirror` when endpoint is down
+   - Pass `--git-mirror` or `--aur-rpc` to force either.
 - `grimaur list` to see installed "foreign" packages recognized by pacman -Qm
 
 ### Inspect & Install & Remove Packages
@@ -41,16 +43,15 @@ Even see it directly: `python grimaur inspect brave-bin --target PKGBUILD` Also 
    - Pass `--clone` to delete the package's clone too
    - `grimaur remove --cache` drops the search result cache
 -  `grimaur install/fetch/inspect mypkg --repo-url <url>` to use custom URL instead
-   - Pass `--subdir <dir>` to build a package nested in a repo (monorepos with several PKGBUILDs)
+   - Pass `--subdir <dir>` to build a package nested in a repo (monorepos)
    - Pass `--branch <ref>` to clone a specific branch, tag, or commit
-   - A forge `tree`/`blob` URL fills both in: `--repo-url https://github.com/h8d13/archinstoo/tree/master/archinstoo`
+> `tree`/`blob` URL fills both in: `--repo-url https://provider.ext/<user>/<repo>/tree/<ref>/<subdir>`
 
 ### Stay Updated
 - `grimaur update` rebuilds every installed “foreign” package that has a newer release.
    - Pass `--global` to update system first, then AUR packages
    - Pass `--global --system-only` for equivalent of `-Syu`
    - Pass `--global --index`, only sync package db `-Sy`
-
 - `grimaur update <pkg1> <pkg2>` limits the update run to specific packages.
 - `grimaur update --devel` Update all *-git packages aswell (needed for grimaur-git for example).
 - Combine with `--refresh` to force a fresh pull of every tracked package.
@@ -68,12 +69,12 @@ Even see it directly: `python grimaur inspect brave-bin --target PKGBUILD` Also 
    - `grimaur search <term> --plain` pacman `-Ss` style two-line output for scripting (best match first)
    - `grimaur inspect <pkg> --plain` pacman `-Si` style `Key : Value` output for scripting
    - `grimaur list --aur` lists every AUR package, like yay/paru `-Sl aur`
-   - Shell completions tab-complete AUR names for install/fetch/inspect from `completion.cache` in dest-root (seeded on first search/list)
 - Force `grimaur fetch <package> --force` reclones even if the directory exists
 - Complete example: `python grimaur --use-ssh search "brave.*-bin" --no-interactive`
 
 ### Details
 - Respects `IgnorePkg = x y z` from `/etc/pacman.conf`
 - Pass `--noconfirm` to skip prompts (install, update, remove, and search)
+- Completions are also available and have cached search complete.
 
 ---
