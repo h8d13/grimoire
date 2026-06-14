@@ -45,6 +45,7 @@ Also accepts: `SRCINFO`
 -  `grimaur install/fetch/inspect mypkg --repo-url <url>` to use custom URL instead
    - Pass `--subdir <dir>` to build a package nested in a repo (monorepos)
    - Pass `--branch <ref>` to clone a specific branch, tag, or commit
+   - `grimaur repo --add <url> <name>` saves an alias; reuse it with `--repo <name>` (extra `--add`s become fallback mirrors, `--ls`/`--rm` to manage)
 > `tree`/`blob` URL fills both in: `--repo-url https://provider.ext/<user>/<repo>/tree/<ref>/<subdir>`
 
 ### Stay Updated

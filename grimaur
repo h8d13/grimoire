@@ -135,10 +135,13 @@ def get_official_aur_git_base() -> str:
 	return _maybe_ssh_rewrite(url) if USE_SSH else url
 
 
+def _xdg_config_home() -> Path:
+	return Path(os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config"))
+
+
 def _makepkg_conf_paths() -> tuple[Path, ...]:
-	xdg = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
 	return (
-		Path(xdg) / "pacman/makepkg.conf",
+		_xdg_config_home() / "pacman/makepkg.conf",
 		Path.home() / ".makepkg.conf",
 		Path("/etc/makepkg.conf"),
 	)
@@ -247,6 +250,72 @@ def parse_repo_url(url: str) -> tuple[str, str | None, str | None]:
 			return _rebuild(parts[:i], parts[i + 2], parts[i + 3 :])
 
 	return url, None, None
+
+
+def _repo_registry_path() -> Path:
+	return _xdg_config_home() / "grimaur" / "repos.conf"
+
+
+def load_repo_registry() -> dict[str, list[str]]:
+	# Sectioned name->URLs map. A `[name]` header opens a section; each following
+	# non-empty, non-comment line is one mirror URL (order = clone priority).
+	path = _repo_registry_path()
+	try:
+		content = path.read_text()
+	except OSError:
+		return {}
+	registry: dict[str, list[str]] = {}
+	current: str | None = None
+	for raw in content.splitlines():
+		line = raw.strip()
+		if not line or line.startswith("#"):
+			continue
+		if line.startswith("[") and line.endswith("]"):
+			current = line[1:-1].strip()
+			registry.setdefault(current, [])
+		elif current is not None:
+			registry[current].append(line)
+	return registry
+
+
+def write_repo_registry(registry: dict[str, list[str]]) -> None:
+	path = _repo_registry_path()
+	path.parent.mkdir(parents=True, exist_ok=True)
+	blocks = [
+		f"[{name}]\n" + "".join(f"  {url}\n" for url in urls)
+		for name, urls in registry.items()
+	]
+	path.write_text("\n".join(blocks))
+
+
+def add_repo_alias(name: str, url: str) -> None:
+	registry = load_repo_registry()
+	urls = registry.setdefault(name, [])
+	if url in urls:
+		print(f"'{url}' already registered under [{name}]", file=sys.stderr)
+		return
+	urls.append(url)
+	write_repo_registry(registry)
+	print(f"Added '{url}' to [{name}] in {_repo_registry_path()}")
+
+
+def remove_repo_alias(name: str) -> None:
+	registry = load_repo_registry()
+	if name not in registry:
+		print(f"No alias '{name}' in {_repo_registry_path()}", file=sys.stderr)
+		return
+	del registry[name]
+	write_repo_registry(registry)
+	print(f"Removed alias '{name}'")
+
+
+def resolve_repo_alias(name: str) -> list[str]:
+	urls = load_repo_registry().get(name)
+	if not urls:
+		raise AurGitError(
+			f"Unknown repo alias '{name}'. Add one with --repo-add URL {name}"
+		)
+	return urls
 
 
 # Mirror SSH_REWRITE_HOSTS as git insteadOf rules via GIT_CONFIG_* env vars
@@ -574,6 +643,39 @@ def _resolve_build_dir(clone_root: Path, subdir: str | None) -> Path:
 	return target
 
 
+def _clone_with_fallback(
+	package_dir: Path,
+	candidates: Sequence[tuple[str, str | None, str | None]],
+) -> Path:
+	# Try each (url, branch, subdir) mirror in order until one clones; the winning
+	# mirror's own subdir resolves the build dir. Used only for a fresh clone.
+	errors: list[str] = []
+	for index, (url, branch, subdir) in enumerate(candidates):
+		remote_url = _maybe_ssh_rewrite(url) if USE_SSH else url
+		if package_dir.exists():
+			shutil.rmtree(package_dir)
+		clone_cmd = ["git", "clone"]
+		if SHALLOW_CLONE:
+			clone_cmd += ["--depth=1"]
+		clone_cmd += [remote_url, str(package_dir)]
+		try:
+			run_command(clone_cmd)
+			if branch:
+				run_command(["git", "-C", str(package_dir), "fetch", "origin", branch])
+				_reset_git_worktree(package_dir, ("FETCH_HEAD",))
+			return _resolve_build_dir(package_dir, subdir)
+		except AurGitError as exc:
+			errors.append(f"{url}: {exc}")
+			if index + 1 < len(candidates):
+				print(
+					style(f"mirror failed ({url}); trying next...", YELLOW),
+					file=sys.stderr,
+				)
+	if package_dir.exists():
+		shutil.rmtree(package_dir)
+	raise AurGitError("All mirrors failed:\n  " + "\n  ".join(errors))
+
+
 def ensure_clone(
 	package: str,
 	dest_root: Path,
@@ -583,6 +685,7 @@ def ensure_clone(
 	repo_url: str | None = None,
 	branch: str | None = None,
 	subdir: str | None = None,
+	repo_fallbacks: list[tuple[str, str | None, str | None]] | None = None,
 ) -> Path:
 	dest_root.mkdir(parents=True, exist_ok=True)
 	package_dir = dest_root / package
@@ -661,15 +764,16 @@ def ensure_clone(
 
 	if package_dir.exists():
 		shutil.rmtree(package_dir)
+
+	if repo_url:
+		candidates = [(repo_url, branch, subdir), *(repo_fallbacks or [])]
+		return _clone_with_fallback(package_dir, candidates)
+
 	clone_cmd = ["git", "clone", *clone_extra]
 	if SHALLOW_CLONE:
 		clone_cmd += ["--depth=1"]
 	clone_cmd += [remote_url, str(package_dir)]
 	run_command(clone_cmd)
-
-	if repo_url and branch:
-		run_command(["git", "-C", str(package_dir), "fetch", "origin", branch])
-		_reset_git_worktree(package_dir, ("FETCH_HEAD",))
 
 	return _resolve_build_dir(package_dir, subdir)
 
@@ -1352,6 +1456,7 @@ def install_package(
 	repo_url: str | None = None,
 	branch: str | None = None,
 	subdir: str | None = None,
+	repo_fallbacks: list[tuple[str, str | None, str | None]] | None = None,
 	update_to: str | None = None,
 ) -> None:
 	visited = visited or set()
@@ -1387,6 +1492,7 @@ def install_package(
 			repo_url=repo_url,
 			branch=branch,
 			subdir=subdir,
+			repo_fallbacks=repo_fallbacks,
 		)
 	elif USE_AUR_RPC:
 		info = aur_rpc_info(package)
@@ -1408,6 +1514,7 @@ def install_package(
 				repo_url=repo_url,
 				branch=branch,
 				subdir=subdir,
+				repo_fallbacks=repo_fallbacks,
 			)
 		srcinfo = read_srcinfo(package_dir)
 		_, pkgdesc, deps = parse_dependencies(srcinfo)
@@ -1482,6 +1589,7 @@ def install_package(
 			repo_url=repo_url,
 			branch=branch,
 			subdir=subdir,
+			repo_fallbacks=repo_fallbacks,
 		)
 
 	build_and_install(package_dir, noconfirm=noconfirm, refresh=refresh)
@@ -2301,6 +2409,7 @@ def inspect_package(
 	repo_url: str | None = None,
 	branch: str | None = None,
 	subdir: str | None = None,
+	repo_fallbacks: list[tuple[str, str | None, str | None]] | None = None,
 	plain: bool = False,
 ) -> None:
 	if USE_AUR_RPC and target == "info" and not repo_url:
@@ -2328,6 +2437,7 @@ def inspect_package(
 		repo_url=repo_url,
 		branch=branch,
 		subdir=subdir,
+		repo_fallbacks=repo_fallbacks,
 	)
 	if target == "PKGBUILD":
 		pkgbuild_path = package_dir / "PKGBUILD"
@@ -2356,6 +2466,7 @@ def fetch_package(
 	repo_url: str | None = None,
 	branch: str | None = None,
 	subdir: str | None = None,
+	repo_fallbacks: list[tuple[str, str | None, str | None]] | None = None,
 ) -> Path:
 	package_dir = ensure_clone(
 		package,
@@ -2365,6 +2476,7 @@ def fetch_package(
 		repo_url=repo_url,
 		branch=branch,
 		subdir=subdir,
+		repo_fallbacks=repo_fallbacks,
 	)
 	print(f"Package fetched to {package_dir}")
 	return package_dir
@@ -2433,7 +2545,13 @@ def build_parser() -> argparse.ArgumentParser:
 	fetch_parser.add_argument(
 		"--force", action="store_true", help="Reclone even if directory exists"
 	)
-	fetch_parser.add_argument("--repo-url", help="Clone from custom Git URL")
+	fetch_src = fetch_parser.add_mutually_exclusive_group()
+	fetch_src.add_argument("--repo-url", help="Clone from custom Git URL")
+	fetch_src.add_argument(
+		"--repo",
+		metavar="NAME",
+		help="Use a registered repo alias as the mirror list (see 'grimaur repo --ls')",
+	)
 	fetch_parser.add_argument(
 		"--subdir",
 		help="Build from this subdirectory of the repo (relative to clone root)",
@@ -2447,7 +2565,13 @@ def build_parser() -> argparse.ArgumentParser:
 	install_parser.add_argument(
 		"--noconfirm", action="store_true", help="Pass --noconfirm to pacman/makepkg"
 	)
-	install_parser.add_argument("--repo-url", help="Clone from custom Git URL")
+	install_src = install_parser.add_mutually_exclusive_group()
+	install_src.add_argument("--repo-url", help="Clone from custom Git URL")
+	install_src.add_argument(
+		"--repo",
+		metavar="NAME",
+		help="Use a registered repo alias as the mirror list (see 'grimaur repo --ls')",
+	)
 	install_parser.add_argument(
 		"--subdir",
 		help="Build from this subdirectory of the repo (relative to clone root)",
@@ -2554,8 +2678,12 @@ def build_parser() -> argparse.ArgumentParser:
 		action="store_true",
 		help="Include make/check/optional dependencies when showing info",
 	)
-	inspect_parser.add_argument(
-		"--repo-url", help="Inspect package from custom Git URL"
+	inspect_src = inspect_parser.add_mutually_exclusive_group()
+	inspect_src.add_argument("--repo-url", help="Inspect package from custom Git URL")
+	inspect_src.add_argument(
+		"--repo",
+		metavar="NAME",
+		help="Use a registered repo alias as the mirror list (see 'grimaur repo --ls')",
 	)
 	inspect_parser.add_argument(
 		"--subdir",
@@ -2576,6 +2704,27 @@ def build_parser() -> argparse.ArgumentParser:
 		help="List every AUR package instead (like yay/paru -Sl aur)",
 	)
 
+	repo_parser = subparsers.add_parser(
+		"repo", help="Manage repo URL aliases in repos.conf"
+	)
+	repo_group = repo_parser.add_mutually_exclusive_group()
+	repo_group.add_argument(
+		"--add",
+		nargs=2,
+		metavar=("URL", "NAME"),
+		help="Register URL as a mirror under alias NAME (repeat to add fallbacks)",
+	)
+	repo_group.add_argument(
+		"--rm",
+		metavar="NAME",
+		help="Remove alias NAME from the registry",
+	)
+	repo_group.add_argument(
+		"--ls",
+		action="store_true",
+		help="List registered aliases and their mirror URLs",
+	)
+
 	_capitalize_help_action(parser)
 	for subparser in subparsers.choices.values():
 		_capitalize_help_action(subparser)
@@ -2585,17 +2734,29 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _resolve_repo_target(
 	args: argparse.Namespace,
-) -> tuple[str | None, str | None, str | None]:
-	repo_url = getattr(args, "repo_url", None)
+) -> tuple[
+	str | None, str | None, str | None, list[tuple[str, str | None, str | None]]
+]:
 	branch = getattr(args, "branch", None)
 	subdir = getattr(args, "subdir", None)
-	if repo_url:
-		clone_url, parsed_branch, parsed_subdir = parse_repo_url(repo_url)
-		repo_url = clone_url
+	# --repo NAME expands to an ordered mirror list; --repo-url is a single URL.
+	# (argparse keeps them mutually exclusive.) First URL is primary, rest fallbacks.
+	alias = getattr(args, "repo", None)
+	if alias:
+		urls = resolve_repo_alias(alias)
+	elif getattr(args, "repo_url", None):
+		urls = [args.repo_url]
+	else:
+		return None, branch, subdir, []
+
+	def _resolve(raw: str) -> tuple[str, str | None, str | None]:
+		clone_url, parsed_branch, parsed_subdir = parse_repo_url(raw)
 		# Explicit flags win over whatever the URL encoded.
-		branch = branch or parsed_branch
-		subdir = subdir or parsed_subdir
-	return repo_url, branch, subdir
+		return clone_url, branch or parsed_branch, subdir or parsed_subdir
+
+	primary_url, primary_branch, primary_subdir = _resolve(urls[0])
+	fallbacks = [_resolve(raw) for raw in urls[1:]]
+	return primary_url, primary_branch, primary_subdir, fallbacks
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -2608,6 +2769,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 		"search",
 		"inspect",
 		"list",
+		"repo",
 	}
 	# Hoist global flags so they can appear after the subcommand too
 	# (e.g. `grimaur update --git-mirror` instead of only `grimaur --git-mirror update`).
@@ -2695,7 +2857,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 	try:
 		if args.command == "fetch":
-			repo_url, branch, subdir = _resolve_repo_target(args)
+			repo_url, branch, subdir, repo_fallbacks = _resolve_repo_target(args)
 			fetch_package(
 				args.package,
 				dest_root,
@@ -2704,10 +2866,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 				repo_url=repo_url,
 				branch=branch,
 				subdir=subdir,
+				repo_fallbacks=repo_fallbacks,
 			)
 		elif args.command == "install":
 			preinstalled_official: set[str] | None = None
-			repo_url, branch, subdir = _resolve_repo_target(args)
+			repo_url, branch, subdir, repo_fallbacks = _resolve_repo_target(args)
 			if USE_AUR_RPC and not repo_url:
 				missing_official, unresolved = collect_missing_official_packages(
 					args.package,
@@ -2734,6 +2897,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 				repo_url=repo_url,
 				branch=branch,
 				subdir=subdir,
+				repo_fallbacks=repo_fallbacks,
 			)
 		elif args.command == "remove":
 			if args.cache:
@@ -2835,7 +2999,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 					print(f"error installing {pkg.name}: {exc}", file=sys.stderr)
 			return exit_code
 		elif args.command == "inspect":
-			repo_url, branch, subdir = _resolve_repo_target(args)
+			repo_url, branch, subdir, repo_fallbacks = _resolve_repo_target(args)
 			inspect_package(
 				args.package,
 				dest_root,
@@ -2847,6 +3011,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 				repo_url=repo_url,
 				branch=branch,
 				subdir=subdir,
+				repo_fallbacks=repo_fallbacks,
 				plain=args.plain,
 			)
 		elif args.command == "list":
@@ -2854,6 +3019,24 @@ def main(argv: Sequence[str] | None = None) -> int:
 				list_aur_packages()
 			else:
 				list_installed_packages()
+		elif args.command == "repo":
+			if args.add:
+				url, name = args.add
+				add_repo_alias(name, url)
+			elif args.rm:
+				remove_repo_alias(args.rm)
+			else:
+				registry = load_repo_registry()
+				if not registry:
+					print(
+						f"No aliases registered in {_repo_registry_path()}",
+						file=sys.stderr,
+					)
+					return 0
+				for name, urls in registry.items():
+					print(f"[{name}]")
+					for url in urls:
+						print(f"  {url}")
 		else:
 			parser.error("Unknown command")
 	except (AurGitError, AurRpcForcedError) as exc:

@@ -2,6 +2,8 @@
 build-dir resolution, and arg precedence."""
 
 import argparse
+import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -141,7 +143,7 @@ class ResolveRepoTargetTests(unittest.TestCase):
 		args = argparse.Namespace(repo_url=ARCHINSTOO_TREE, branch=None, subdir=None)
 		self.assertEqual(
 			grimaur._resolve_repo_target(args),
-			("https://github.com/h8d13/archinstoo.git", "master", "archinstoo"),
+			("https://github.com/h8d13/archinstoo.git", "master", "archinstoo", []),
 		)
 
 	def test_explicit_flags_override_parsed(self) -> None:
@@ -150,7 +152,7 @@ class ResolveRepoTargetTests(unittest.TestCase):
 		)
 		self.assertEqual(
 			grimaur._resolve_repo_target(args),
-			("https://github.com/h8d13/archinstoo.git", "dev", "other"),
+			("https://github.com/h8d13/archinstoo.git", "dev", "other", []),
 		)
 
 	def test_plain_repo_url_untouched(self) -> None:
@@ -159,12 +161,53 @@ class ResolveRepoTargetTests(unittest.TestCase):
 		)
 		self.assertEqual(
 			grimaur._resolve_repo_target(args),
-			("https://github.com/o/r.git", None, None),
+			("https://github.com/o/r.git", None, None, []),
 		)
 
 	def test_no_repo_url_returns_none(self) -> None:
 		args = argparse.Namespace(repo_url=None, branch=None, subdir=None)
-		self.assertEqual(grimaur._resolve_repo_target(args), (None, None, None))
+		self.assertEqual(grimaur._resolve_repo_target(args), (None, None, None, []))
+
+
+class ResolveRepoAliasTargetTests(unittest.TestCase):
+	def setUp(self) -> None:
+		self._tmp = tempfile.mkdtemp()
+		self._orig = os.environ.get("XDG_CONFIG_HOME")
+		os.environ["XDG_CONFIG_HOME"] = self._tmp
+
+	def tearDown(self) -> None:
+		if self._orig is None:
+			os.environ.pop("XDG_CONFIG_HOME", None)
+		else:
+			os.environ["XDG_CONFIG_HOME"] = self._orig
+		shutil.rmtree(self._tmp, ignore_errors=True)
+
+	def test_alias_first_is_primary_rest_are_fallbacks(self) -> None:
+		grimaur.add_repo_alias("vur", "https://github.com/h8d13/VUR.git")
+		grimaur.add_repo_alias("vur", ARCHINSTOO_TREE)
+		args = argparse.Namespace(repo="vur", repo_url=None, branch=None, subdir=None)
+		primary_url, branch, subdir, fallbacks = grimaur._resolve_repo_target(args)
+		self.assertEqual(primary_url, "https://github.com/h8d13/VUR.git")
+		self.assertIsNone(branch)
+		self.assertIsNone(subdir)
+		# Fallback is a tree URL, so its ref/subdir get parsed out.
+		self.assertEqual(
+			fallbacks,
+			[("https://github.com/h8d13/archinstoo.git", "master", "archinstoo")],
+		)
+
+	def test_explicit_flags_override_every_mirror(self) -> None:
+		grimaur.add_repo_alias("vur", "https://github.com/h8d13/VUR.git")
+		grimaur.add_repo_alias("vur", ARCHINSTOO_TREE)
+		args = argparse.Namespace(repo="vur", repo_url=None, branch="dev", subdir="pkg")
+		_, branch, subdir, fallbacks = grimaur._resolve_repo_target(args)
+		self.assertEqual((branch, subdir), ("dev", "pkg"))
+		self.assertEqual(fallbacks[0][1:], ("dev", "pkg"))
+
+	def test_unknown_alias_raises(self) -> None:
+		args = argparse.Namespace(repo="nope", repo_url=None, branch=None, subdir=None)
+		with self.assertRaises(grimaur.AurGitError):
+			grimaur._resolve_repo_target(args)
 
 
 if __name__ == "__main__":
