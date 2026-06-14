@@ -97,6 +97,12 @@ _PACMAN_AUTH_RE = re.compile(r'^\s*PACMAN_AUTH\s*=\s*\(?\s*"?([^"\s)]+)"?')
 _PACMAN_DBPATH_RE = re.compile(r"^\s*DBPath\s*=\s*(\S+)")
 _DEP_SPLIT_RE = re.compile(r"[<>~=]+")
 _DESC_FIELD_RE = re.compile(r"%(\w+)%\n([^\n]*)")
+# Official Arch repos -- the ones the Arch GitLab packaging covers, so a sync-DB
+# search result from one is buildable via the {pkgbase} alias. A result from any other
+# repo (cachyos, custom) is a third-party binary and is installed with pacman -S.
+_OFFICIAL_REPO_RE = re.compile(
+	r"^(core|extra|multilib)(-testing|-staging)?$|^(gnome|kde)-unstable$"
+)
 
 
 _SRCINFO_KEYS = {
@@ -204,11 +210,11 @@ def _resolve_pkgbase(package: str) -> str:
 
 @cache
 def _sync_db_packages() -> tuple[tuple[str, str | None, str | None, str], ...]:
-	# Every package in the pacman sync DBs as (name, version, description, repo). Lets
-	# `search --repo <templated>` enumerate via pacman's index when the alias itself
-	# has none (the Arch GitLab repo-per-pkgbase). repo is the DB name (extra, cachyos,
-	# ...) so results read like `pacman -Ss` and you can tell which a forge can build.
-	# Every repo copy is listed (no dedup), matching pacman. gzip + zstd DBs.
+	# Every package in the pacman sync DBs as (name, version, desc, repo). The index
+	# for the {pkgbase} templated search (the Arch GitLab has no listing). repo is the
+	# DB name (core/extra/cachyos/...) so results read like `pacman -Ss`; official
+	# repos build from the alias's source, third-party repos install via pacman -S
+	# (see the search install loop). Every repo copy is listed (no dedup). gzip + zstd.
 	import tarfile
 
 	sync = _pacman_db_path() / "sync"
@@ -240,6 +246,17 @@ def _sync_db_packages() -> tuple[tuple[str, str | None, str | None, str], ...]:
 		except OSError, tarfile.TarError:
 			continue
 	return tuple(out)
+
+
+def _sync_db_repo(package: str) -> str | None:
+	# The pacman repo a package lives in, preferring an official repo when it's in
+	# several (so an official package builds from source rather than -S'ing a
+	# third-party rebuild). None if not in any sync DB.
+	repos = [repo for name, _v, _d, repo in _sync_db_packages() if name == package]
+	for repo in repos:
+		if _OFFICIAL_REPO_RE.match(repo):
+			return repo
+	return repos[0] if repos else None
 
 
 def _read_pacman_auth() -> str | None:
@@ -3291,6 +3308,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 	FORCE_AUR_RPC = backend is True
 	USE_SSH = bool(getattr(args, "use_ssh", False))
 	SHALLOW_CLONE = bool(getattr(args, "shallow", False))
+	# Never block on an interactive git auth prompt (e.g. a 404 clone of a templated
+	# URL); fail fast instead. Configured credential helpers still work.
+	os.environ.setdefault("GIT_TERMINAL_PROMPT", "0")
 
 	if os.geteuid() == 0:
 		print(
@@ -3342,6 +3362,27 @@ def main(argv: Sequence[str] | None = None) -> int:
 			)
 		elif args.command == "install":
 			preinstalled_official: set[str] | None = None
+			# Bare install whose default source is a {pkgbase}-templated alias (the
+			# Arch GitLab) can't build a third-party binary (cachyos/custom repo):
+			# install the prebuilt with pacman -S instead of 404'ing on the clone.
+			if not getattr(args, "repo", None) and not getattr(args, "repo_url", None):
+				default = _default_repo()
+				templated = bool(
+					default
+					and default != "AUR"
+					and any(
+						"{pkg}" in u or "{pkgbase}" in u
+						for u in resolve_repo_alias(default)
+					)
+				)
+				db_repo = _sync_db_repo(args.package) if templated else None
+				if db_repo and not _OFFICIAL_REPO_RE.match(db_repo):
+					print(
+						f"==> {args.package} is a prebuilt in '{db_repo}' "
+						"(no buildable source); installing with pacman"
+					)
+					install_official_packages([args.package], noconfirm=args.noconfirm)
+					return 0
 			repo_url, branch, subdir, repo_fallbacks = _resolve_repo_target(args)
 			if USE_AUR_RPC and not repo_url:
 				missing_official, unresolved = collect_missing_official_packages(
@@ -3506,7 +3547,19 @@ def main(argv: Sequence[str] | None = None) -> int:
 			shared_visited: set[str] = set()
 			shared_preinstalled_official: set[str] = set()
 			for pkg in selected:
-				# Install each pick from the source it was found in.
+				# A sync-DB result from a third-party binary repo (cachyos, custom)
+				# has no buildable source -> install the prebuilt with pacman -S.
+				# Official-repo results still build from the alias's source below.
+				if pkg.from_db and not (
+					pkg.source and _OFFICIAL_REPO_RE.match(pkg.source)
+				):
+					try:
+						install_official_packages([pkg.name], noconfirm=args.noconfirm)
+					except AurGitError as exc:
+						exit_code = 1
+						print(f"error installing {pkg.name}: {exc}", file=sys.stderr)
+					continue
+				# Otherwise build each pick from the source it was found in.
 				p_url: str | None = None
 				p_branch: str | None = None
 				p_subdir: str | None = None

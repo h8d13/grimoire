@@ -227,6 +227,40 @@ class ResolvePackageDirTests(unittest.TestCase):
 		)
 
 
+class OfficialRepoRegexTests(unittest.TestCase):
+	def test_matches_official_repos(self) -> None:
+		for repo in (
+			"core",
+			"extra",
+			"multilib",
+			"core-testing",
+			"extra-staging",
+			"multilib-testing",
+			"gnome-unstable",
+			"kde-unstable",
+		):
+			with self.subTest(repo=repo):
+				self.assertTrue(grimaur._OFFICIAL_REPO_RE.match(repo))
+
+	def test_rejects_third_party_repos(self) -> None:
+		for repo in ("cachyos", "cachyos-v3", "myrepo", "core-extra", "aur"):
+			with self.subTest(repo=repo):
+				self.assertIsNone(grimaur._OFFICIAL_REPO_RE.match(repo))
+
+
+class SyncDbRepoTests(unittest.TestCase):
+	def test_prefers_official_over_third_party(self) -> None:
+		fake = (
+			("mesa", "1", "d", "cachyos"),
+			("mesa", "1", "d", "extra"),
+			("vscodium", "1", "d", "cachyos"),
+		)
+		with mock.patch.object(grimaur, "_sync_db_packages", return_value=fake):
+			self.assertEqual(grimaur._sync_db_repo("mesa"), "extra")
+			self.assertEqual(grimaur._sync_db_repo("vscodium"), "cachyos")
+			self.assertIsNone(grimaur._sync_db_repo("not-here"))
+
+
 class ResolvePkgbaseTests(unittest.TestCase):
 	def _make_db(self, sync: Path, name: str, descs: dict[str, str]) -> None:
 		# descs: member-dir -> desc text. Write a gzip sync DB like pacman's.
