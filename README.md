@@ -47,9 +47,10 @@ Also accepts: `SRCINFO`
 
 ### Build from other sources
 The default source is the AUR. Point grimaur at anything else that ships a `PKGBUILD`
-(works with `install`, `fetch`, and `inspect`):
-- `--repo-url <url>` builds from a git URL. A `tree`/`blob` link fills in the branch and
-  subdir for you: `--repo-url https://provider.ext/<user>/<repo>/tree/<ref>/<subdir>`
+with `--repo-url`/`--repo` on `install`, `fetch`, `inspect`, `search`, and `update`:
+- `--repo-url <url>` builds from a git URL (scheme optional: `github.com/u/r` works). A
+  `tree`/`blob` link fills in the branch and subdir for you:
+  `--repo-url https://provider.ext/<user>/<repo>/tree/<ref>/<subdir>`
 - `--branch <ref>` / `--subdir <dir>` pick a ref, or a package nested in a monorepo
 - `grimaur repo --add <url> <name>` saves an alias; use it with `--repo <name>`. Add more
   URLs under the same name for fallback mirrors. `--ls`/`--rm` to manage.
@@ -60,8 +61,9 @@ The default source is the AUR. Point grimaur at anything else that ships a `PKGB
    grimaur install <pkg> --repo arch   # builds an official package from source
    ```
 
-Package names selects the source: branch on the AUR mirror, or repo/subdir via
-`{pkg}` or  monorepo layout.
+The package name selects the source: a branch on the AUR mirror, or a repo/subdir via
+`{pkg}` or monorepo layout. `search --repo <name>` lists a repo's packages (one dir per
+package, or branches); templated `{pkg}` aliases have no index so they can't be searched.
 
 ### Stay Updated
 - `grimaur update` rebuilds every installed “foreign” package that has a newer release.

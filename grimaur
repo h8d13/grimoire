@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
-r"""grimaur: Fetch, inspect, search, list, update, and install, remove Arch Linux AUR packages.
+r"""grimaur: Fetch, inspect, search, list, update, and install, remove Arch Linux packages.
 
-By default this tool queries the official AUR RPC API and automatically falls back to
+By default: this tool queries the official AUR RPC API and automatically falls back to
 the git mirror at https://github.com/archlinux/aur.git when the endpoint is
-unavailable. Each package lives on its own branch in the mirror, and grimaur can
+unavailable.
+
+Each package lives on its own branch in the mirror, and grimaur can
 recursively resolve and install dependencies by building packages locally with
 makepkg. Official repository dependencies are installed with pacman when they are
-missing. In a single truth python file.
+missing.
+
+Non-default: can also work outside of the default AUR (I.e: Private software colletions)
+What is defined as VUR (Virtual User Repo). Or even official Arch Linux packages from their Gitlab.
+
+In a single truth python file.
 
       __...--~~~~~-._   _.-~~~~~--...__
     //               `V'               \\
@@ -15,7 +22,7 @@ missing. In a single truth python file.
  //__.....----~~~~._\ | /_.~~~~----.....__\\
 ====================\\|//====================
 
-                grimaur 0.1.2
+                grimaur 0.1.3
 
 ASCII: Donovan Baker
 ## /* SPDX-FileCopyrightText: 2026
@@ -207,10 +214,29 @@ def _maybe_ssh_rewrite(url: str) -> str:
 	return f"ssh://{user}@{parsed.netloc}/{path}"
 
 
+_HOSTISH_RE = re.compile(r"[a-z0-9-]+(\.[a-z0-9-]+)+$", re.IGNORECASE)
+
+
+def _ensure_scheme(url: str) -> str:
+	# Let users drop the scheme ("github.com/h8d13/VUR"): if the first segment looks
+	# like a hostname, assume https. Leaves scp-form (git@host:path), ssh://, file://,
+	# and local paths untouched.
+	u = url.strip()
+	if "://" in u:
+		return u
+	first = u.split("/", 1)[0]
+	if "@" in first or ":" in first:  # scp-form or has a port/user -> leave to git
+		return u
+	if _HOSTISH_RE.match(first):
+		return "https://" + u
+	return u
+
+
 def parse_repo_url(url: str) -> tuple[str, str | None, str | None]:
 	# Expand a forge directory/file URL to (clone_url, ref, subdir) so --repo-url can
 	# target a subdir. ref is taken as one path segment, so slash-branches need an
 	# explicit --branch/--subdir. Non-forge URLs fall through unchanged.
+	url = _ensure_scheme(url)
 	parsed = urllib.parse.urlparse(url)
 	if parsed.scheme not in ("http", "https"):
 		return url, None, None
@@ -424,6 +450,8 @@ class SearchResult:
 	score: int
 	votes: int | None = None
 	is_orphan: bool | None = None
+	# Display label for the source repo (alias/URL); None means the AUR.
+	source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -692,6 +720,40 @@ def _clone_with_fallback(
 	raise AurGitError("All mirrors failed:\n  " + "\n  ".join(errors))
 
 
+def _normalize_git_url(url: str) -> str:
+	# Canonical host/path so https, ssh://, and scp-form (git@host:path) of the same
+	# repo compare equal -- git's own insteadOf rewrites mean a clone's stored origin
+	# may differ in scheme/user from the URL we asked for.
+	u = url.strip()
+	if "://" not in u and "@" in u and ":" in u:
+		u = u.split("@", 1)[1].replace(":", "/", 1)
+	else:
+		if "://" in u:
+			u = u.split("://", 1)[1]
+		if "@" in u.split("/", 1)[0]:
+			u = u.split("@", 1)[1]
+	u = u.rstrip("/").removesuffix(".git")
+	return u.lower()
+
+
+def _clone_origin(package_dir: Path) -> str | None:
+	try:
+		out = run_command(
+			["git", "-C", str(package_dir), "remote", "get-url", "origin"],
+			capture=True,
+		)
+	except AurGitError:
+		return None
+	return str(out).strip() or None
+
+
+def _is_aur_origin(origin: str) -> bool:
+	# An AUR clone from either backend: the RPC base (aur.archlinux.org) or the
+	# GitHub git mirror (archlinux/aur). Lets an AUR invocation detect (and replace)
+	# a clone left behind by a custom --repo run instead of building the wrong source.
+	return "aur.archlinux.org" in origin or "archlinux/aur" in origin
+
+
 def ensure_clone(
 	package: str,
 	dest_root: Path,
@@ -749,7 +811,26 @@ def ensure_clone(
 		reset_targets = (f"origin/{package}",)
 		recover_on_reset_fail = True
 
-	if package_dir.exists() and (package_dir / ".git").is_dir() and not force_reclone:
+	reuse_existing = (
+		package_dir.exists() and (package_dir / ".git").is_dir() and not force_reclone
+	)
+	if reuse_existing:
+		# Don't reuse a clone whose origin no longer matches the requested source:
+		# an old AUR clone reused under --repo (or vice versa) would otherwise be
+		# fetched/resolved against the wrong tree. Mismatch -> fall through, reclone.
+		origin = _clone_origin(package_dir)
+		if repo_url:
+			accepted = {
+				_normalize_git_url(u)
+				for u in [repo_url, *(c[0] for c in (repo_fallbacks or []))]
+			}
+			reuse_existing = (
+				origin is not None and _normalize_git_url(origin) in accepted
+			)
+		elif origin and not _is_aur_origin(origin):
+			reuse_existing = False
+
+	if reuse_existing:
 		if refresh:
 			fetch_cmd = [
 				"git",
@@ -1249,6 +1330,19 @@ def get_local_head(package_dir: Path) -> str | None:
 	return str(output).strip() or None
 
 
+def _git_remote_head(url: str, ref: str | None) -> str | None:
+	remote = _maybe_ssh_rewrite(url) if USE_SSH else url
+	try:
+		output = run_command(["git", "ls-remote", remote, ref or "HEAD"], capture=True)
+	except AurGitError:
+		return None
+	for line in str(output).splitlines():
+		parts = line.split()
+		if parts:
+			return parts[0]
+	return None
+
+
 def get_remote_head(package: str) -> str | None:
 	try:
 		if USE_AUR_RPC:
@@ -1686,6 +1780,10 @@ def update_packages(
 	download_only: bool = False,
 	install_only: bool = False,
 	system_only: bool = False,
+	repo: str | None = None,
+	repo_url: str | None = None,
+	branch: str | None = None,
+	subdir: str | None = None,
 ) -> None:
 	ignored = get_ignored_packages()
 
@@ -1749,6 +1847,11 @@ def update_packages(
 	missing: list[str] = []
 	pending_updates: list[UpdateCandidate] = []
 	skip_devel = not include_devel and not targets
+	# When a repo source is given, version-check against it instead of the AUR.
+	# Per-package: VCS pkgs compare git head; versioned pkgs read the repo .SRCINFO
+	# (no metadata API on a plain git host, so we clone). Packages the repo lacks
+	# fall to `missing` and are skipped, leaving the AUR path untouched otherwise.
+	repo_active = bool(repo or repo_url)
 
 	for package, installed_version in candidates:
 		if is_debug_package(package):
@@ -1764,20 +1867,51 @@ def update_packages(
 		remote_head: str | None = None
 		local_head: str | None = None
 
-		meta = git_srcinfo_metadata(package)
-		if meta:
-			remote_version = meta[0]
-
-		if remote_version and is_vcs_package(package):
-			remote_version = None
-
-		if remote_version is None:
-			remote_head = get_remote_head(package)
-			if remote_head is None:
+		if repo_active:
+			r_url, r_branch, r_subdir, r_fallbacks = _resolve_repo_for_package(
+				package, alias=repo, repo_url=repo_url, branch=branch, subdir=subdir
+			)
+			if r_url is None:
 				missing.append(package)
 				continue
-			package_dir = dest_root / package
-			local_head = get_local_head(package_dir)
+			if is_vcs_package(package):
+				remote_head = _git_remote_head(r_url, r_branch)
+				if remote_head is None:
+					missing.append(package)
+					continue
+				local_head = get_local_head(dest_root / package)
+			else:
+				try:
+					pkg_dir = ensure_clone(
+						package,
+						dest_root,
+						refresh=refresh,
+						repo_url=r_url,
+						branch=r_branch,
+						subdir=r_subdir,
+						repo_fallbacks=r_fallbacks,
+					)
+					remote_version = _parse_srcinfo_metadata(read_srcinfo(pkg_dir))[0]
+				except AurGitError:
+					remote_version = None
+				if remote_version is None:
+					missing.append(package)
+					continue
+		else:
+			meta = git_srcinfo_metadata(package)
+			if meta:
+				remote_version = meta[0]
+
+			if remote_version and is_vcs_package(package):
+				remote_version = None
+
+			if remote_version is None:
+				remote_head = get_remote_head(package)
+				if remote_head is None:
+					missing.append(package)
+					continue
+				package_dir = dest_root / package
+				local_head = get_local_head(package_dir)
 
 		if installed_version and remote_version and installed_version == remote_version:
 			continue
@@ -1799,15 +1933,18 @@ def update_packages(
 			)
 		)
 
+	if repo_active:
+		source_label = f"repo '{repo}'" if repo else "the custom repo"
+	else:
+		source_label = "AUR RPC" if USE_AUR_RPC else "AUR mirror"
+
 	if not pending_updates:
 		print("All packages are up to date.")
-		if missing:
-			source_label = "AUR RPC" if USE_AUR_RPC else "AUR mirror"
-			for package in missing:
-				print(
-					f"note: {package} is not available via {source_label}",
-					file=sys.stderr,
-				)
+		for package in missing:
+			print(
+				f"note: {package} is not available via {source_label}",
+				file=sys.stderr,
+			)
 		return
 
 	for index, candidate in enumerate(pending_updates, start=1):
@@ -1837,6 +1974,16 @@ def update_packages(
 			update_to = candidate.remote_head[:7]
 		else:
 			update_to = "newer"
+		r_url = r_branch = r_subdir = None
+		r_fallbacks = []
+		if repo_active:
+			r_url, r_branch, r_subdir, r_fallbacks = _resolve_repo_for_package(
+				candidate.name,
+				alias=repo,
+				repo_url=repo_url,
+				branch=branch,
+				subdir=subdir,
+			)
 		try:
 			install_package(
 				candidate.name,
@@ -1845,6 +1992,10 @@ def update_packages(
 				noconfirm=noconfirm,
 				visited=shared_visited,
 				preinstalled_official=shared_preinstalled_official,
+				repo_url=r_url,
+				branch=r_branch,
+				subdir=r_subdir,
+				repo_fallbacks=r_fallbacks,
 				update_to=update_to,
 			)
 		except AurGitError as exc:
@@ -1853,7 +2004,6 @@ def update_packages(
 	for package in missing:
 		if is_debug_package(package):
 			continue
-		source_label = "AUR RPC" if USE_AUR_RPC else "AUR mirror"
 		print(f"note: {package} is not available via {source_label}", file=sys.stderr)
 
 
@@ -2059,6 +2209,85 @@ def search_packages_git(
 	return [result for result in slots if result is not None]
 
 
+def _repo_package_names(
+	repo_url: str, branch: str | None, subdir: str | None, clone_dir: Path
+) -> list[tuple[str, Path | None]]:
+	# Enumerate a custom repo's packages -> (name, srcinfo_dir). Two layouts:
+	# subdir-container (one dir per package under <subdir>) needs a clone to list
+	# files; branch-per-package is read straight off `git ls-remote`. Templated
+	# ({pkg}) aliases have no index and are rejected by the caller.
+	remote = _maybe_ssh_rewrite(repo_url) if USE_SSH else repo_url
+	if subdir:
+		clone_cmd = ["git", "clone", "--depth=1"]
+		if branch:
+			clone_cmd += ["--branch", branch]
+		clone_cmd += [remote, str(clone_dir)]
+		run_command(clone_cmd)
+		base = clone_dir / subdir
+		if not base.is_dir():
+			raise AurGitError(f"Subdirectory '{subdir}' not found in {repo_url}")
+		return sorted((p.parent.name, p.parent) for p in base.glob("*/PKGBUILD"))
+	output = run_command(["git", "ls-remote", "--heads", remote], capture=True)
+	names: list[tuple[str, Path | None]] = []
+	for line in str(output).splitlines():
+		parts = line.split()
+		if len(parts) == 2:
+			names.append((parts[1].split("/")[-1], None))
+	return sorted(set(names))
+
+
+def search_packages_repo(
+	repo_url: str,
+	branch: str | None,
+	subdir: str | None,
+	*,
+	regex: re.Pattern[str] | None,
+	needle: str | None,
+	limit: int | None,
+	source: str,
+) -> list[SearchResult]:
+	if "{pkg}" in repo_url:
+		raise AurGitError(
+			f"alias is templated ({repo_url}); it has no package index to search. "
+			"Search needs a repo that lists its packages (a subdir or branches)."
+		)
+	if limit is None:
+		limit = 50
+	installed = installed_package_set()
+	results: list[SearchResult] = []
+	import tempfile
+
+	with tempfile.TemporaryDirectory() as tmp:
+		entries = _repo_package_names(repo_url, branch, subdir, Path(tmp) / "repo")
+		for name, srcinfo_dir in entries:
+			score = compute_match_score(name, regex=regex, needle=needle)
+			if score is None:
+				continue
+			version: str | None = None
+			description: str | None = None
+			# Read .SRCINFO directly (no makepkg) when the clone gave us the dir.
+			if srcinfo_dir is not None:
+				srcinfo_path = srcinfo_dir / ".SRCINFO"
+				if srcinfo_path.exists():
+					version, description = _parse_srcinfo_metadata(
+						srcinfo_path.read_text()
+					)
+			results.append(
+				SearchResult(
+					name=name,
+					version=version,
+					description=description,
+					installed=name in installed,
+					score=score,
+					source=source,
+				)
+			)
+	results.sort(key=lambda result: (result.score, result.name))
+	if limit >= 0:
+		results = results[:limit]
+	return results
+
+
 def search_packages_rpc(
 	pattern: str,
 	*,
@@ -2127,14 +2356,15 @@ def format_search_result(index: int, result: SearchResult) -> list[str]:
 		main_parts.append(style(result.version, GREEN))
 	if result.installed:
 		main_parts.append(style("[installed]", GREEN))
+	protocol = "ssh" if USE_SSH else "https"
+	if result.source is not None:
+		meta_bits: list[str] = [f"{protocol} repo: {result.source}"]
 	# Note using votes we can know its a rpc result
-	if result.votes is not None:
-		protocol = "ssh" if USE_SSH else "https"
-		meta_bits: list[str] = [f"{protocol} aur rpc", f"{result.votes} votes"]
+	elif result.votes is not None:
+		meta_bits = [f"{protocol} aur rpc", f"{result.votes} votes"]
 		if result.is_orphan:
 			meta_bits.append("orphan")
 	else:
-		protocol = "ssh" if USE_SSH else "https"
 		meta_bits = [f"{protocol} git mirror"]
 	line = f"{index_label} {' '.join(main_parts)}"
 	if meta_bits:
@@ -2150,9 +2380,10 @@ def format_search_result(index: int, result: SearchResult) -> list[str]:
 
 
 def format_search_result_plain(result: SearchResult) -> list[str]:
-	# pacman -Ss shape for scripting: "aur/name version [installed]" plus an
-	# indented description line, always two lines per package.
-	line = f"aur/{result.name}"
+	# pacman -Ss shape for scripting: "<repo>/name version [installed]" plus an
+	# indented description line, always two lines per package. <repo> is the custom
+	# source label when set, else "aur".
+	line = f"{result.source or 'aur'}/{result.name}"
 	if result.version:
 		line += f" {result.version}"
 	if result.installed:
@@ -2628,6 +2859,20 @@ def build_parser() -> argparse.ArgumentParser:
 		action="store_true",
 		help="Include VCS/devel packages (e.g. *-git) when checking for updates",
 	)
+	update_src = update_parser.add_mutually_exclusive_group()
+	update_src.add_argument(
+		"--repo-url", help="Check/rebuild updates from a custom Git URL"
+	)
+	update_src.add_argument(
+		"--repo",
+		metavar="NAME",
+		help="Check/rebuild updates from a registered repo alias (see 'grimaur repo --ls')",
+	)
+	update_parser.add_argument(
+		"--subdir",
+		help="Build from this subdirectory of the repo (relative to clone root)",
+	)
+	update_parser.add_argument("--branch", help="Git branch, tag, or ref to check out")
 	update_parser.add_argument(
 		"--global",
 		action="store_true",
@@ -2679,6 +2924,20 @@ def build_parser() -> argparse.ArgumentParser:
 		help="pacman -Ss style output (best match first) for scripting; "
 		"implies --no-interactive",
 	)
+	search_src = search_parser.add_mutually_exclusive_group()
+	search_src.add_argument(
+		"--repo-url", help="Search a custom Git repo instead of the AUR"
+	)
+	search_src.add_argument(
+		"--repo",
+		metavar="NAME",
+		help="Search a registered repo alias instead of the AUR (see 'grimaur repo --ls')",
+	)
+	search_parser.add_argument(
+		"--subdir",
+		help="Package container subdir in the repo (one dir per package)",
+	)
+	search_parser.add_argument("--branch", help="Git branch, tag, or ref to search")
 
 	inspect_parser = subparsers.add_parser(
 		"inspect", help="Show PKGBUILD or dependency information"
@@ -2712,13 +2971,11 @@ def build_parser() -> argparse.ArgumentParser:
 		action="store_true",
 		help="pacman -Si style 'Key : Value' output for scripting (info target only)",
 	)
-	list_parser = subparsers.add_parser(
-		"list", help="List installed foreign (AUR) packages"
-	)
+	list_parser = subparsers.add_parser("list", help="List installed foreign packages")
 	list_parser.add_argument(
 		"--aur",
 		action="store_true",
-		help="List every AUR package instead (like yay/paru -Sl aur)",
+		help="List every package instead (-Sl aur)",
 	)
 
 	repo_parser = subparsers.add_parser(
@@ -2749,21 +3006,23 @@ def build_parser() -> argparse.ArgumentParser:
 	return parser
 
 
-def _resolve_repo_target(
-	args: argparse.Namespace,
+def _resolve_repo_for_package(
+	package: str | None,
+	*,
+	alias: str | None,
+	repo_url: str | None,
+	branch: str | None,
+	subdir: str | None,
 ) -> tuple[
 	str | None, str | None, str | None, list[tuple[str, str | None, str | None]]
 ]:
-	branch = getattr(args, "branch", None)
-	subdir = getattr(args, "subdir", None)
-	package = getattr(args, "package", None)
 	# --repo NAME expands to an ordered mirror list; --repo-url is a single URL.
 	# (argparse keeps them mutually exclusive.) First URL is primary, rest fallbacks.
-	alias = getattr(args, "repo", None)
+	# Keyed on a package name so update/search can resolve per package in a loop.
 	if alias:
 		urls = resolve_repo_alias(alias)
-	elif getattr(args, "repo_url", None):
-		urls = [args.repo_url]
+	elif repo_url:
+		urls = [repo_url]
 	else:
 		return None, branch, subdir, []
 
@@ -2780,6 +3039,20 @@ def _resolve_repo_target(
 	primary_url, primary_branch, primary_subdir = _resolve(urls[0])
 	fallbacks = [_resolve(raw) for raw in urls[1:]]
 	return primary_url, primary_branch, primary_subdir, fallbacks
+
+
+def _resolve_repo_target(
+	args: argparse.Namespace,
+) -> tuple[
+	str | None, str | None, str | None, list[tuple[str, str | None, str | None]]
+]:
+	return _resolve_repo_for_package(
+		getattr(args, "package", None),
+		alias=getattr(args, "repo", None),
+		repo_url=getattr(args, "repo_url", None),
+		branch=getattr(args, "branch", None),
+		subdir=getattr(args, "subdir", None),
+	)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -2950,8 +3223,23 @@ def main(argv: Sequence[str] | None = None) -> int:
 				index_only=bool(getattr(args, "index", False)),
 				download_only=bool(getattr(args, "download", False)),
 				install_only=bool(getattr(args, "install", False)),
+				repo=getattr(args, "repo", None),
+				repo_url=getattr(args, "repo_url", None),
+				branch=getattr(args, "branch", None),
+				subdir=getattr(args, "subdir", None),
 			)
 		elif args.command == "search":
+			# package=None: a search has no package to fill {pkg}; templated aliases
+			# are rejected inside search_packages_repo (no index to enumerate).
+			search_repo_url, search_branch, search_subdir, _ = (
+				_resolve_repo_for_package(
+					None,
+					alias=getattr(args, "repo", None),
+					repo_url=getattr(args, "repo_url", None),
+					branch=getattr(args, "branch", None),
+					subdir=getattr(args, "subdir", None),
+				)
+			)
 			regex_obj: re.Pattern | None = None
 			needle: str | None = None
 			# Auto-detect regex or allow explicit --regex flag
@@ -2963,15 +3251,27 @@ def main(argv: Sequence[str] | None = None) -> int:
 					print(f"error: invalid regular expression: {exc}", file=sys.stderr)
 					return 1
 				# Regex search requires git mirror, disable AUR RPC
-				USE_AUR_RPC = False
+				if not search_repo_url:
+					USE_AUR_RPC = False
 			else:
 				needle = args.pattern.lower()
-			results = search_packages(
-				args.pattern,
-				regex=regex_obj,
-				needle=needle,
-				limit=args.limit,
-			)
+			if search_repo_url:
+				results = search_packages_repo(
+					search_repo_url,
+					search_branch,
+					search_subdir,
+					regex=regex_obj,
+					needle=needle,
+					limit=args.limit,
+					source=getattr(args, "repo", None) or search_repo_url,
+				)
+			else:
+				results = search_packages(
+					args.pattern,
+					regex=regex_obj,
+					needle=needle,
+					limit=args.limit,
+				)
 			if not results:
 				print("No matches found", file=sys.stderr)
 				return 1
@@ -3008,6 +3308,18 @@ def main(argv: Sequence[str] | None = None) -> int:
 			shared_visited: set[str] = set()
 			shared_preinstalled_official: set[str] = set()
 			for pkg in selected:
+				p_url: str | None = None
+				p_branch: str | None = None
+				p_subdir: str | None = None
+				p_fallbacks: list[tuple[str, str | None, str | None]] = []
+				if search_repo_url:
+					p_url, p_branch, p_subdir, p_fallbacks = _resolve_repo_for_package(
+						pkg.name,
+						alias=getattr(args, "repo", None),
+						repo_url=getattr(args, "repo_url", None),
+						branch=getattr(args, "branch", None),
+						subdir=getattr(args, "subdir", None),
+					)
 				try:
 					install_package(
 						pkg.name,
@@ -3016,6 +3328,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 						noconfirm=args.noconfirm,
 						visited=shared_visited,
 						preinstalled_official=shared_preinstalled_official,
+						repo_url=p_url,
+						branch=p_branch,
+						subdir=p_subdir,
+						repo_fallbacks=p_fallbacks,
 					)
 				except AurGitError as exc:
 					exit_code = 1

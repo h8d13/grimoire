@@ -130,5 +130,138 @@ class EnsureCloneRefTests(unittest.TestCase):
 			)
 
 
+class UpdateRepoPrimitivesTests(unittest.TestCase):
+	"""The repo-aware halves of `update`: VCS head via ls-remote, and the
+	versioned check (resolve container -> clone w/ descend -> read .SRCINFO)."""
+
+	def setUp(self) -> None:
+		tmp = tempfile.TemporaryDirectory()
+		self.addCleanup(tmp.cleanup)
+		self.root = Path(tmp.name)
+		self.src = self.root / "src"
+		self.src.mkdir()
+		_git(self.src, "init", "-q", "-b", "master")
+		pkg = self.src / "pkgs" / "foo"
+		pkg.mkdir(parents=True)
+		(pkg / "PKGBUILD").write_text("pkgname=foo\npkgver=2.5\npkgrel=1\narch=(any)\n")
+		(pkg / ".SRCINFO").write_text(
+			"pkgbase = foo\n\tpkgver = 2.5\n\tpkgrel = 1\n\tpkgdesc = t\n\npkgname = foo\n"
+		)
+		_git(self.src, "add", "-A")
+		_git(self.src, "commit", "-qm", "v1")
+		self.dest = self.root / "dest"
+
+	def test_git_remote_head_matches_rev_parse(self) -> None:
+		head = grimaur._git_remote_head(f"file://{self.src}", "master")
+		self.assertEqual(head, _git(self.src, "rev-parse", "HEAD"))
+
+	def test_git_remote_head_none_on_bad_url(self) -> None:
+		self.assertIsNone(grimaur._git_remote_head("file:///nope/x.git", "master"))
+
+	def test_versioned_check_reads_repo_srcinfo(self) -> None:
+		# Mirror update's versioned path: a container subdir + package name descends
+		# to pkgs/foo and the version comes from the repo's .SRCINFO, not the AUR.
+		r_url, r_branch, r_subdir, r_fallbacks = grimaur._resolve_repo_for_package(
+			"foo",
+			alias=None,
+			repo_url=f"file://{self.src}",
+			branch="master",
+			subdir="pkgs",
+		)
+		pkg_dir = grimaur.ensure_clone(
+			"foo",
+			self.dest,
+			refresh=False,
+			repo_url=r_url,
+			branch=r_branch,
+			subdir=r_subdir,
+			repo_fallbacks=r_fallbacks,
+		)
+		self.assertEqual(pkg_dir, self.dest / "foo" / "pkgs" / "foo")
+		version, _ = grimaur._parse_srcinfo_metadata(grimaur.read_srcinfo(pkg_dir))
+		self.assertEqual(version, "2.5-1")
+
+
+class SearchRepoTests(unittest.TestCase):
+	"""search --repo enumeration of a subdir-container repo (offline file://)."""
+
+	def setUp(self) -> None:
+		tmp = tempfile.TemporaryDirectory()
+		self.addCleanup(tmp.cleanup)
+		self.root = Path(tmp.name)
+		self.src = self.root / "src"
+		self.src.mkdir()
+		_git(self.src, "init", "-q", "-b", "master")
+		for name, ver in (("foo", "1.0"), ("bar", "2.0")):
+			d = self.src / "pkgs" / name
+			d.mkdir(parents=True)
+			(d / "PKGBUILD").write_text(f"pkgname={name}\npkgver={ver}\npkgrel=1\n")
+			(d / ".SRCINFO").write_text(
+				f"pkgbase = {name}\n\tpkgver = {ver}\n\tpkgrel = 1\n"
+				f"\tpkgdesc = {name} desc\n\npkgname = {name}\n"
+			)
+		_git(self.src, "add", "-A")
+		_git(self.src, "commit", "-qm", "init")
+		patcher = mock.patch.object(
+			grimaur, "installed_package_set", return_value=set()
+		)
+		patcher.start()
+		self.addCleanup(patcher.stop)
+
+	def test_enumerates_subdir_packages_with_metadata(self) -> None:
+		results = grimaur.search_packages_repo(
+			f"file://{self.src}",
+			"master",
+			"pkgs",
+			regex=None,
+			needle="",
+			limit=None,
+			source="VUR",
+		)
+		by_name = {r.name: r for r in results}
+		self.assertEqual(set(by_name), {"foo", "bar"})
+		self.assertEqual(by_name["foo"].version, "1.0-1")
+		self.assertEqual(by_name["bar"].description, "bar desc")
+		self.assertEqual(by_name["foo"].source, "VUR")
+
+	def test_needle_filters(self) -> None:
+		results = grimaur.search_packages_repo(
+			f"file://{self.src}",
+			"master",
+			"pkgs",
+			regex=None,
+			needle="foo",
+			limit=None,
+			source="VUR",
+		)
+		self.assertEqual([r.name for r in results], ["foo"])
+
+	def test_source_label_in_plain_and_pretty(self) -> None:
+		result = grimaur.SearchResult(
+			name="foo",
+			version="1.0-1",
+			description="d",
+			installed=False,
+			score=0,
+			source="VUR",
+		)
+		self.assertTrue(
+			grimaur.format_search_result_plain(result)[0].startswith("VUR/foo")
+		)
+		self.assertIn("repo: VUR", grimaur.format_search_result(1, result)[0])
+
+	def test_templated_alias_rejected(self) -> None:
+		with self.assertRaises(grimaur.AurGitError):
+			grimaur.search_packages_repo(
+				"https://x/{pkg}.git",
+				None,
+				None,
+				regex=None,
+				needle="",
+				limit=None,
+				source="x",
+			)
+
+
 if __name__ == "__main__":
 	unittest.main()

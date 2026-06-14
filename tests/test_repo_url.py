@@ -99,6 +99,21 @@ class ParseRepoUrlTests(unittest.TestCase):
 			with self.subTest(url=url):
 				self.assertEqual(grimaur.parse_repo_url(url), expected)
 
+	def test_schemeless_forge_url_gets_https(self) -> None:
+		self.assertEqual(
+			grimaur.parse_repo_url("github.com/h8d13/VUR/tree/master/pkgs"),
+			("https://github.com/h8d13/VUR.git", "master", "pkgs"),
+		)
+		self.assertEqual(
+			grimaur.parse_repo_url("github.com/o/r"),
+			("https://github.com/o/r", None, None),
+		)
+
+	def test_schemeless_leaves_scp_and_ssh_untouched(self) -> None:
+		for url in ("git@github.com:o/r.git", "ssh://git@github.com/o/r.git"):
+			with self.subTest(url=url):
+				self.assertEqual(grimaur.parse_repo_url(url), (url, None, None))
+
 	def test_plain_urls_pass_through_unchanged(self) -> None:
 		for url in PASSTHROUGH:
 			with self.subTest(url=url):
@@ -185,6 +200,25 @@ class ResolvePackageDirTests(unittest.TestCase):
 		self.assertEqual(
 			grimaur._resolve_package_dir(self.root, "pkgs", "foo"),
 			self.root / "pkgs",
+		)
+
+
+class NormalizeGitUrlTests(unittest.TestCase):
+	def test_https_ssh_scp_forms_match(self) -> None:
+		forms = [
+			"https://github.com/h8d13/VUR",
+			"https://github.com/h8d13/VUR.git",
+			"git@github.com:h8d13/VUR.git",
+			"ssh://git@github.com/h8d13/VUR.git",
+			"https://github.com/h8d13/VUR/",
+		]
+		normalized = {grimaur._normalize_git_url(f) for f in forms}
+		self.assertEqual(normalized, {"github.com/h8d13/vur"})
+
+	def test_different_repos_differ(self) -> None:
+		self.assertNotEqual(
+			grimaur._normalize_git_url("https://github.com/h8d13/VUR"),
+			grimaur._normalize_git_url("https://github.com/h8d13/other"),
 		)
 
 
