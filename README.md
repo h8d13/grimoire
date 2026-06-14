@@ -3,8 +3,10 @@
 <img align="left" src="./base/assets/grimoire_d.svg#gh-light-mode-only" width="80" alt="grimaur logo">
 <img align="left" src="./base/assets/grimoire_l.svg#gh-dark-mode-only" width="80" alt="grimaur logo">
 
-`grimaur` is a lightweight AUR helper that searches, builds, and updates AUR packages.
-It uses the AUR RPC API and **automatically falls back to the official git mirror.**
+`grimaur` is a lightweight package builder for Arch. It searches, builds, and updates
+AUR packages (RPC API with **automatic fallback to the official git mirror**), and
+because it just drives `makepkg`, it can build any `PKGBUILD` from any git source you
+point it at.
 <br clear="left">
 ## Install
 
@@ -42,12 +44,24 @@ Also accepts: `SRCINFO`
 - `grimaur remove <package>` to uninstall from pacman
    - Pass `--clone` to delete the package's clone too
    - `grimaur remove --cache` drops the search result cache
--  `grimaur install/fetch/inspect mypkg --repo-url <url>` to use custom URL instead
-   - Pass `--subdir <dir>` to build a package nested in a repo (pkg monorepos)
-   - Pass `--branch <ref>` to clone a specific branch, tag, or commit
-   - `grimaur repo --add <url> <name>` saves an alias; reuse it with `--repo <name>` (extra `--add`s become fallback mirrors, `--ls`/`--rm` to manage)
-   - `{pkg}` in an alias URL is replaced by the package name, e.g. `repo --add 'https://gitlab.archlinux.org/archlinux/packaging/packages/{pkg}.git' arch` then `install <pkg> --repo arch` builds any official package from source
-> `tree`/`blob` URL fills both in: `--repo-url https://provider.ext/<user>/<repo>/tree/<ref>/<subdir>`
+
+### Build from other sources
+The default source is the AUR. Point grimaur at anything else that ships a `PKGBUILD`
+(works with `install`, `fetch`, and `inspect`):
+- `--repo-url <url>` builds from a git URL. A `tree`/`blob` link fills in the branch and
+  subdir for you: `--repo-url https://provider.ext/<user>/<repo>/tree/<ref>/<subdir>`
+- `--branch <ref>` / `--subdir <dir>` pick a ref, or a package nested in a monorepo
+- `grimaur repo --add <url> <name>` saves an alias; use it with `--repo <name>`. Add more
+  URLs under the same name for fallback mirrors. `--ls`/`--rm` to manage.
+- `{pkg}` in an alias URL is replaced by the package name. For example, Arch's official
+  packages live one repo each on GitLab:
+   ```bash
+   grimaur repo --add 'https://gitlab.archlinux.org/archlinux/packaging/packages/{pkg}.git' arch
+   grimaur install <pkg> --repo arch   # builds an official package from source
+   ```
+
+The package name selects the source: a branch on the AUR mirror, or a repo/subdir via
+`{pkg}` and monorepo layout.
 
 ### Stay Updated
 - `grimaur update` rebuilds every installed “foreign” package that has a newer release.

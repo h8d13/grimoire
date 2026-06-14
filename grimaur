@@ -674,6 +674,7 @@ def _clone_with_fallback(
 			clone_cmd += ["--depth=1"]
 		clone_cmd += [remote_url, str(package_dir)]
 		try:
+			print(style(f"==> cloning from {remote_url}", DIM))
 			run_command(clone_cmd)
 			if branch:
 				run_command(["git", "-C", str(package_dir), "fetch", "origin", branch])
@@ -788,6 +789,7 @@ def ensure_clone(
 	if SHALLOW_CLONE:
 		clone_cmd += ["--depth=1"]
 	clone_cmd += [remote_url, str(package_dir)]
+	print(style(f"==> cloning from {remote_url}", DIM))
 	run_command(clone_cmd)
 
 	return _resolve_package_dir(package_dir, subdir, package)
