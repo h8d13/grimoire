@@ -2499,21 +2499,12 @@ def _print_info_summary(
 	package: str,
 	description: str | None,
 	deps: DependencySet,
-	*,
-	show_deps: bool,
 ) -> None:
 	print(f"Package: {package}")
 	if description:
 		print(f"Description: {description}")
-	if deps.depends:
-		print("Depends:")
-		for dep in sorted(deps.depends):
-			print(f"  {dep}")
-	else:
-		print("Depends: (none)")
-	if not show_deps:
-		return
 	for label, values in (
+		("Depends", deps.depends),
 		("Make depends", deps.makedepends),
 		("Check depends", deps.checkdepends),
 		("Optional", deps.optdepends),
@@ -2532,7 +2523,6 @@ def inspect_package(
 	*,
 	refresh: bool,
 	target: str,
-	show_deps: bool,
 	repo_url: str | None = None,
 	branch: str | None = None,
 	subdir: str | None = None,
@@ -2574,7 +2564,7 @@ def inspect_package(
 		)
 		return
 	_, pkgdesc, deps = parse_dependencies(srcinfo)
-	_print_info_summary(package, pkgdesc, deps, show_deps=show_deps)
+	_print_info_summary(package, pkgdesc, deps)
 
 
 def fetch_package(
@@ -2802,11 +2792,6 @@ def build_parser() -> argparse.ArgumentParser:
 		choices=["info", "PKGBUILD", "SRCINFO"],
 		default="info",
 		help="Which data to show (default: info)",
-	)
-	inspect_parser.add_argument(
-		"--full",
-		action="store_true",
-		help="Include make/check/optional dependencies when showing info",
 	)
 	inspect_src = inspect_parser.add_mutually_exclusive_group()
 	inspect_src.add_argument("--repo-url", help="Inspect package from custom Git URL")
@@ -3367,7 +3352,6 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901  argparse comm
 						dest_root,
 						refresh=refresh,
 						target=target,
-						show_deps=args.full,
 						repo_url=repo_url,
 						branch=branch,
 						subdir=subdir,
@@ -3380,7 +3364,6 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901  argparse comm
 						dest_root,
 						refresh=refresh,
 						target=target,
-						show_deps=args.full,
 						sources=pkg_sources,
 						plain=args.plain,
 					)
