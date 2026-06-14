@@ -64,7 +64,7 @@ class EnsureCloneRefTests(unittest.TestCase):
 
 		# default globals already False at import; pin them so a developer's
 		# environment can't flip shallow clones on and break commit checkout.
-		for name in ("SHALLOW_CLONE", "USE_SSH", "USE_AUR_RPC"):
+		for name in ("SHALLOW_CLONE", "USE_SSH"):
 			patcher = mock.patch.object(grimoire, name, False)
 			patcher.start()
 			self.addCleanup(patcher.stop)
@@ -198,7 +198,7 @@ class OriginSwitchTests(unittest.TestCase):
 			(repo / "PKGBUILD").write_text(f"pkgname=foo\npkgver={who}\n")
 			_git(repo, "add", "-A")
 			_git(repo, "commit", "-qm", "x")
-		for name in ("SHALLOW_CLONE", "USE_SSH", "USE_AUR_RPC"):
+		for name in ("SHALLOW_CLONE", "USE_SSH"):
 			patcher = mock.patch.object(grimoire, name, False)
 			patcher.start()
 			self.addCleanup(patcher.stop)
@@ -382,7 +382,7 @@ class CloneAnySourceTests(unittest.TestCase):
 			_git(repo, "add", "-A")
 			_git(repo, "commit", "-qm", "x")
 		self.bad = "file:///definitely/not/here.git"
-		for name in ("SHALLOW_CLONE", "USE_SSH", "USE_AUR_RPC"):
+		for name in ("SHALLOW_CLONE", "USE_SSH"):
 			patcher = mock.patch.object(grimoire, name, False)
 			patcher.start()
 			self.addCleanup(patcher.stop)

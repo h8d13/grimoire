@@ -52,7 +52,7 @@ class UpdateOutputTests(unittest.TestCase):
 		_git(self.src, "add", "-A")
 		_git(self.src, "commit", "-qm", "v2")
 		self.head = _git(self.src, "rev-parse", "HEAD")
-		for name in ("SHALLOW_CLONE", "USE_SSH", "USE_AUR_RPC"):
+		for name in ("SHALLOW_CLONE", "USE_SSH"):
 			patcher = mock.patch.object(grimoire, name, False)
 			patcher.start()
 			self.addCleanup(patcher.stop)

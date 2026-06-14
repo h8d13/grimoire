@@ -1,7 +1,7 @@
 pkgname=grimoire-git
 pkgver=r216.g17893eb
 pkgrel=1
-pkgdesc="Lightweight AUR helper that uses the official AUR git mirror"
+pkgdesc="Lightweight Arch package builder that builds from any git source"
 arch=('any')
 url="https://github.com/mackilanu/grimoire"
 _dev_url="https://github.com/h8d13/grimoire"

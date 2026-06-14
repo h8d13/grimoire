@@ -67,15 +67,10 @@ DIM = "\033[2m"
 USE_COLOR = False
 
 
-CGIT_RAW_BASE = "https://aur.archlinux.org/cgit/aur.git/plain"
-AUR_RPC_ENDPOINT = "https://aur.archlinux.org/rpc/"
 GITHUB_RAW_BASE = "https://raw.githubusercontent.com/archlinux/aur"
 _VCS_SUFFIXES = ("-git", "-vcs", "-svn", "-hg", "-bzr", "-darcs", "-cvs")
 _COMMON_AUR_SUFFIXES = ("-bin",)
 
-USE_AUR_RPC = False
-FORCE_GIT_MIRROR = False
-FORCE_AUR_RPC = False
 # Optional git-mirror override from the [AUR] section in repos.conf; None = default.
 AUR_GIT_MIRROR: str | None = None
 USE_SSH = False
@@ -90,7 +85,6 @@ CACHE_TTL = 3600
 _INSTALLED_CACHE: set[str] | None = None
 _ELEV_TOOLS = ("sudo", "doas", "run0", "su")
 _GLOBAL_VALUE_OPTIONS = {"--dest-root"}
-_RPC_FALLBACK_NOTIFIED = False
 
 
 _PACMAN_AUTH_RE = re.compile(r'^\s*PACMAN_AUTH\s*=\s*\(?\s*"?([^"\s)]+)"?')
@@ -122,8 +116,6 @@ _SRCINFO_KEYS = {
 _GLOBAL_FLAG_OPTIONS = {
 	"--refresh",
 	"--no-color",
-	"--aur-rpc",
-	"--git-mirror",
 	"--use-ssh",
 	"--shallow",
 	"--version",
@@ -156,9 +148,8 @@ _DEFAULT_REPOS_CONF = """\
 [ARCH]
   https://gitlab.archlinux.org/archlinux/packaging/packages/{pkgbase}.git
 
-# The AUR (RPC API + git mirror). Opt-in: uncomment and move above [ARCH]
+# AUR git mirror, opt-in: uncomment (move above [ARCH] to default to it).
 #[AUR]
-#  https://aur.archlinux.org/rpc/
 #  https://github.com/archlinux/aur.git
 """
 
@@ -182,8 +173,6 @@ class SearchResult:
 	description: str | None
 	installed: bool
 	score: int
-	votes: int | None = None
-	is_orphan: bool | None = None
 	# Display label for the source repo (alias/URL); None means the AUR.
 	source: str | None = None
 	# True when sourced from a local pacman sync DB (label as `db`, not a protocol).
@@ -207,21 +196,8 @@ class AurGitError(RuntimeError):
 	"""Wraps fatal errors coming from the helper."""
 
 
-class AurRpcForcedError(RuntimeError):
-	"""RPC failed under --aur-rpc.
-
-	Deliberately not an AurGitError: callers swallow that as the
-	git-mirror fallback signal, and forced mode must not fall back.
-	"""
-
-
 def get_aur_remote() -> str:
 	url = AUR_GIT_MIRROR or "https://github.com/archlinux/aur.git"
-	return _remote_for(url)
-
-
-def get_official_aur_git_base() -> str:
-	url = "https://aur.archlinux.org"
 	return _remote_for(url)
 
 
@@ -587,37 +563,6 @@ def style(text: str, *codes: str) -> str:
 	return "".join(codes) + text + RESET
 
 
-def disable_aur_rpc(reason: str) -> None:
-	global USE_AUR_RPC, _RPC_FALLBACK_NOTIFIED
-	if FORCE_AUR_RPC:
-		raise AurRpcForcedError(
-			f"AUR RPC failed and --aur-rpc forbids the git-mirror fallback: {reason}"
-		)
-	if FORCE_GIT_MIRROR or not USE_AUR_RPC:
-		return
-	USE_AUR_RPC = False
-	if _RPC_FALLBACK_NOTIFIED:
-		return
-
-	# Provide user-friendly messages based on error type
-	summary = reason.strip().splitlines()[0] if reason else "unknown error"
-	if "Too many package results" in reason:
-		message = "AUR RPC returned too many results; using git mirror instead..."
-	elif "Connection refused" in reason or "timed out" in reason:
-		message = "AUR RPC unavailable; using git mirror instead..."
-	elif "reset by peer" in reason.lower():
-		message = "AUR RPC connection failed; using git mirror instead..."
-	elif "status" in reason.lower():
-		message = f"AUR RPC error ({summary}); using git mirror instead..."
-	else:
-		message = f"AUR RPC unavailable ({summary}); using git mirror instead..."
-
-	if sys.stderr.isatty():
-		print(file=sys.stderr)  # Clear the progress line first
-	print(style(message, YELLOW), file=sys.stderr)
-	_RPC_FALLBACK_NOTIFIED = True
-
-
 def prompt_confirm(message: str) -> bool:
 	if not sys.stdin.isatty():
 		return False
@@ -704,100 +649,6 @@ def clear_search_cache() -> None:
 		removed = True
 	if not removed:
 		print("No search cache to remove")
-
-
-def aur_rpc_call(params: dict[str, str | list[str]]) -> dict[str, object]:
-	query_params: dict[str, str | list[str]] = {"v": "5"}
-	query_params.update(params)
-	query = urllib.parse.urlencode(query_params, doseq=True)
-	url = f"{AUR_RPC_ENDPOINT}?{query}"
-
-	def fetch() -> dict[str, object]:
-		# Lazy import: pulls in http.client and is unused on a warm cache hit.
-		import urllib.request
-
-		if DEBUG:
-			print(f"+ GET {url}", file=sys.stderr)
-		try:
-			with urllib.request.urlopen(url, timeout=10) as response:  # noqa: S310 - url built from hardcoded https AUR endpoint
-				status = response.getcode()
-				if status != 200:
-					disable_aur_rpc(f"status {status}")
-					raise AurGitError(f"AUR RPC request failed with status {status}")
-				payload = response.read()
-		except urllib.error.URLError as exc:
-			disable_aur_rpc(str(exc))
-			raise AurGitError(f"Failed to contact AUR RPC: {exc}") from exc
-		except Exception as exc:  # pragma: no cover - unexpected transport issues
-			disable_aur_rpc(str(exc))
-			raise AurGitError(f"Failed to contact AUR RPC: {exc}") from exc
-		try:
-			data = json.loads(payload.decode())
-		except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-			disable_aur_rpc("invalid JSON payload")
-			raise AurGitError("Failed to decode AUR RPC response") from exc
-		if not isinstance(data, dict):
-			raise AurGitError("AUR RPC returned non-dict response")
-		if data.get("type") == "error":
-			error_msg = str(data.get("error") or "Unknown AUR RPC error")
-			disable_aur_rpc(error_msg)
-			raise AurGitError(error_msg)
-		return data
-
-	if params.get("type") != "search":
-		return fetch()
-	cache_key = f"search/{hashlib.sha256(query.encode()).hexdigest()}.json"
-	data = cached_json(cache_key, CACHE_TTL, fetch)
-	return data if isinstance(data, dict) else fetch()
-
-
-@cache
-def aur_rpc_info(package: str) -> dict[str, object] | None:
-	try:
-		data = aur_rpc_call({"type": "info", "arg[]": [package]})
-	except AurGitError:
-		return None
-	results = data.get("results")
-	if isinstance(results, list):
-		for entry in results:
-			if isinstance(entry, dict) and entry.get("Name") == package:
-				return entry
-		for entry in results:
-			if isinstance(entry, dict) and entry.get("PackageBase") == package:
-				return entry
-	return None
-
-
-def dependency_set_from_rpc(info: dict[str, object]) -> DependencySet:
-	def gather(key: str, normalize: bool = True) -> set[str]:
-		values: set[str] = set()
-		items = info.get(key)
-		if not isinstance(items, list):
-			return values
-		for item in items:
-			if not isinstance(item, str):
-				continue
-			entry = _normalize_dep(item) if normalize else item.strip()
-			if entry:
-				values.add(entry)
-		return values
-
-	depends = gather("Depends")
-	makedepends = gather("MakeDepends")
-	checkdepends = gather("CheckDepends")
-	optdepends = gather("OptDepends", normalize=False)
-	return DependencySet(depends, makedepends, checkdepends, optdepends)
-
-
-def aur_rpc_search_results(pattern: str) -> list[dict[str, object]]:
-	try:
-		data = aur_rpc_call({"type": "search", "arg": pattern})
-	except AurGitError:
-		return []
-	results = data.get("results")
-	if not isinstance(results, list):
-		return []
-	return [entry for entry in results if isinstance(entry, dict)]
 
 
 def run_command(
@@ -921,10 +772,9 @@ def _clone_origin(package_dir: Path) -> str | None:
 
 
 def _is_aur_origin(origin: str) -> bool:
-	# An AUR clone from either backend: the RPC base (aur.archlinux.org) or the
-	# GitHub git mirror (archlinux/aur). Lets an AUR invocation detect (and replace)
-	# a clone left behind by a custom --repo run instead of building the wrong source.
-	return "aur.archlinux.org" in origin or "archlinux/aur" in origin
+	# An AUR clone (the GitHub git mirror, archlinux/aur). Lets an AUR invocation detect
+	# (and replace) a clone left behind by a custom --repo run instead of the wrong source.
+	return "archlinux/aur" in origin
 
 
 def ensure_clone(
@@ -966,18 +816,8 @@ def ensure_clone(
 			fetch_refspec = ()
 			reset_targets = ("origin/HEAD",)
 		recover_on_reset_fail = False
-	elif USE_AUR_RPC:
-		remote_url = f"{get_official_aur_git_base()}/{package}.git"
-		clone_extra = []
-		fetch_refspec = ()
-		reset_targets = (
-			"origin/HEAD",
-			"origin/master",
-			"origin/main",
-			f"origin/{package}",
-		)
-		recover_on_reset_fail = True
 	else:
+		# No repo_url -> the AUR git mirror, one branch per package.
 		remote_url = get_aur_remote()
 		clone_extra = ["--branch", package, "--single-branch"]
 		fetch_refspec = (package,)
@@ -1288,28 +1128,6 @@ def is_dependency_satisfied(dep: str) -> bool:
 @cache
 def package_provides(package: str) -> set[str] | None:
 	provides: set[str] = set()
-	info: dict[str, object] | None = None
-	if USE_AUR_RPC:
-		info = aur_rpc_info(package)
-		if info:
-			name = info.get("Name")
-			if isinstance(name, str):
-				normalized = _normalize_dep(name)
-				if normalized:
-					provides.add(normalized)
-			pkgbase_value = info.get("PackageBase")
-			if isinstance(pkgbase_value, str):
-				normalized = _normalize_dep(pkgbase_value)
-				if normalized:
-					provides.add(normalized)
-			rpc_provides = info.get("Provides")
-			if isinstance(rpc_provides, list):
-				for value in rpc_provides:
-					if not isinstance(value, str):
-						continue
-					normalized = _normalize_dep(value)
-					if normalized:
-						provides.add(normalized)
 	srcinfo = fetch_git_file(package, ".SRCINFO")
 	if not srcinfo:
 		return provides or None
@@ -1322,10 +1140,7 @@ def package_provides(package: str) -> set[str] | None:
 
 
 def _search_aur_candidates(dep: str, *, limit: int = 25) -> list[str]:
-	if USE_AUR_RPC:
-		results = _search_aur_candidates_rpc(dep, limit=limit)
-		if results or USE_AUR_RPC:
-			return results
+	# Match against the AUR mirror's branch names (one branch per package).
 	patterns = [
 		f"refs/heads/{dep}",
 		f"refs/heads/{dep}-*",
@@ -1334,7 +1149,7 @@ def _search_aur_candidates(dep: str, *, limit: int = 25) -> list[str]:
 	if len(dep) >= 3:
 		patterns.append(f"refs/heads/*{dep}*")
 	seen: set[str] = set()
-	results = []
+	results: list[str] = []
 	for pattern in patterns:
 		try:
 			output = run_command(_aur_mirror_lsremote_cmd(pattern), capture=True)
@@ -1348,24 +1163,6 @@ def _search_aur_candidates(dep: str, *, limit: int = 25) -> list[str]:
 			if len(results) >= limit:
 				return results
 	return results
-
-
-def _search_aur_candidates_rpc(dep: str, *, limit: int) -> list[str]:
-	results = aur_rpc_search_results(dep)
-	seen: set[str] = set()
-	names: list[str] = []
-	for entry in results:
-		for key in ("Name", "PackageBase"):
-			value = entry.get(key)
-			if not isinstance(value, str):
-				continue
-			if value in seen:
-				continue
-			seen.add(value)
-			names.append(value)
-			if len(names) >= limit:
-				return names
-	return names
 
 
 @cache
@@ -1435,12 +1232,6 @@ def resolve_official_dependency(dep: str) -> str | None:
 def exists_in_aur_mirror(package: str) -> bool:
 	if is_debug_package(package):
 		return True
-	if USE_AUR_RPC:
-		info = aur_rpc_info(package)
-		if info:
-			return True
-		if USE_AUR_RPC:
-			return False
 	try:
 		output = run_command(_aur_mirror_lsremote_cmd(package), capture=True)
 	except AurGitError:
@@ -1490,18 +1281,7 @@ def _git_remote_head(url: str, ref: str | None) -> str | None:
 
 def get_remote_head(package: str) -> str | None:
 	try:
-		if USE_AUR_RPC:
-			output = run_command(
-				[
-					"git",
-					"ls-remote",
-					f"{get_official_aur_git_base()}/{package}.git",
-					"HEAD",
-				],
-				capture=True,
-			)
-		else:
-			output = run_command(_aur_mirror_lsremote_cmd(package), capture=True)
+		output = run_command(_aur_mirror_lsremote_cmd(package), capture=True)
 	except AurGitError:
 		return None
 	return _lsremote_first_sha(output)
@@ -1560,10 +1340,7 @@ def fetch_git_file(package: str, path: str) -> str | None:
 
 	safe_package = urllib.parse.quote(package)
 	safe_path = path.lstrip("/")
-	if USE_AUR_RPC:
-		url = f"{CGIT_RAW_BASE}/{safe_path}?h={safe_package}"
-	else:
-		url = f"{GITHUB_RAW_BASE}/{safe_package}/{safe_path}"
+	url = f"{GITHUB_RAW_BASE}/{safe_package}/{safe_path}"
 	if DEBUG:
 		print(f"+ GET {url}", file=sys.stderr)
 	try:
@@ -1580,15 +1357,6 @@ def fetch_git_file(package: str, path: str) -> str | None:
 
 
 def git_srcinfo_metadata(package: str) -> tuple[str, str | None] | None:
-	if USE_AUR_RPC:
-		info = aur_rpc_info(package)
-		if not info:
-			return None
-		version_result = _str_or_none(info.get("Version"))
-		description_result = _str_or_none(info.get("Description"))
-		if version_result is not None:  # Only return if version is valid
-			return (version_result, description_result)
-		# fallback to raw .SRCINFO if fields missing
 	srcinfo = fetch_git_file(package, ".SRCINFO")
 	if not srcinfo:
 		return None
@@ -1623,16 +1391,8 @@ def collect_missing_official_packages(
 		return set(), set()
 	visited.add(package)
 
-	info: dict[str, object] | None = None
-	deps: DependencySet | None = None
-	if USE_AUR_RPC:
-		info = aur_rpc_info(package)
-		if info:
-			deps = dependency_set_from_rpc(info)
-	if deps is None:
-		package_dir = ensure_clone(package, dest_root, refresh=refresh)
-		srcinfo = read_srcinfo(package_dir)
-		_, _, deps = parse_dependencies(srcinfo)
+	package_dir = ensure_clone(package, dest_root, refresh=refresh)
+	_, _, deps = parse_dependencies(read_srcinfo(package_dir))
 
 	missing_official: set[str] = set()
 	unresolved: set[str] = set()
@@ -1680,48 +1440,6 @@ def build_and_install(
 	run_command(cmd, cwd=package_dir, env={**os.environ, **extra_env})
 	print(f"Built package artifacts remain under {package_dir}")
 	invalidate_installed_cache()
-
-
-def _acquire_clone_and_info(
-	package: str,
-	dest_root: Path,
-	*,
-	refresh: bool,
-	repo_url: str | None,
-	branch: str | None,
-	subdir: str | None,
-	repo_fallbacks: list[tuple[str, str | None, str | None]] | None,
-	sources: Sequence[
-		tuple[
-			str | None, str | None, str | None, list[tuple[str, str | None, str | None]]
-		]
-	]
-	| None,
-) -> tuple[Path | None, dict[str, object] | None]:
-	# Resolve where to build from: a source chain or custom URL clones immediately;
-	# the AUR-RPC path defers cloning and returns metadata instead. Returns
-	# (package_dir or None, rpc_info or None).
-	if sources is not None:
-		return _clone_any_source(package, dest_root, sources, refresh=refresh), None
-	if repo_url:
-		return (
-			ensure_clone(
-				package,
-				dest_root,
-				refresh=refresh,
-				repo_url=repo_url,
-				branch=branch,
-				subdir=subdir,
-				repo_fallbacks=repo_fallbacks,
-			),
-			None,
-		)
-	if USE_AUR_RPC:
-		info = aur_rpc_info(package)
-		if info is None:
-			raise AurGitError(f"Package '{package}' not found via AUR RPC")
-		return None, info
-	return None, None
 
 
 def _classify_build_deps(
@@ -1812,35 +1530,21 @@ def install_package(
 	if preinstalled_official is None:
 		preinstalled_official = set()
 
-	package_dir, info = _acquire_clone_and_info(
-		package,
-		dest_root,
-		refresh=refresh,
-		repo_url=repo_url,
-		branch=branch,
-		subdir=subdir,
-		repo_fallbacks=repo_fallbacks,
-		sources=sources,
-	)
-	if info:
-		pkgdesc = (
-			info.get("Description")
-			if isinstance(info.get("Description"), str)
-			else None
-		)
-		deps = dependency_set_from_rpc(info)
+	# Clone from the source chain or the AUR mirror (repo_url None), then read deps
+	# from the cloned .SRCINFO.
+	if sources is not None:
+		package_dir = _clone_any_source(package, dest_root, sources, refresh=refresh)
 	else:
-		if package_dir is None:
-			package_dir = ensure_clone(
-				package,
-				dest_root,
-				refresh=refresh,
-				repo_url=repo_url,
-				branch=branch,
-				subdir=subdir,
-				repo_fallbacks=repo_fallbacks,
-			)
-		_, pkgdesc, deps = parse_dependencies(read_srcinfo(package_dir))
+		package_dir = ensure_clone(
+			package,
+			dest_root,
+			refresh=refresh,
+			repo_url=repo_url,
+			branch=branch,
+			subdir=subdir,
+			repo_fallbacks=repo_fallbacks,
+		)
+	_, pkgdesc, deps = parse_dependencies(read_srcinfo(package_dir))
 	print(f"==> {package}: {pkgdesc}" if pkgdesc else f"==> {package}")
 
 	missing_official, aur_dependencies, unresolved, virtual_providers = (
@@ -2101,7 +1805,7 @@ def _update_source_label(
 	if repo or repo_url:
 		return f"repo '{repo}'" if repo else "the custom repo"
 	if update_specs in ([(None, None)], [("AUR", None)]):
-		return "AUR RPC" if USE_AUR_RPC else "AUR mirror"
+		return "the AUR mirror"
 	return "any configured source"
 
 
@@ -2296,28 +2000,12 @@ def update_packages(
 
 
 def search_packages(
-	pattern: str,
 	*,
 	regex: re.Pattern[str] | None,
 	needle: str | None,
 	limit: int | None,
 ) -> list[SearchResult]:
-	# Regex requires git mirror - AUR RPC has their own regex
-	# passing a pattern returns nothing, lets use grimoire's main functionality instead
-	# if pattern is received use git mirror automatically and remove regex functions from RPC related
-	if USE_AUR_RPC and regex is None:  # Here condion pass to git instead
-		results = search_packages_rpc(
-			pattern,
-			needle=needle,
-			limit=limit,
-		)
-		if results:
-			return results
-	return search_packages_git(
-		regex=regex,
-		needle=needle,
-		limit=limit,
-	)
+	return search_packages_git(regex=regex, needle=needle, limit=limit)
 
 
 def _fetch_names_gz() -> list[str] | None:
@@ -2352,15 +2040,9 @@ def _fetch_aur_package_names() -> list[str] | None:
 	# packages.gz is the canonical list: live packages only (ls-remote also
 	# returns ~50k branches of deleted packages), includes split pkgnames,
 	# ~8x faster and ~20x smaller. The mirror stays as the AUR-down fallback.
-	if FORCE_GIT_MIRROR:
-		return _fetch_names_git()
 	names = _fetch_names_gz()
 	if names:
 		return names
-	if FORCE_AUR_RPC:
-		raise AurRpcForcedError(
-			"packages.gz failed and --aur-rpc forbids the git-mirror fallback"
-		)
 	print("AUR packages.gz unavailable; using git mirror list...", file=sys.stderr)
 	return _fetch_names_git()
 
@@ -2601,60 +2283,6 @@ def search_packages_repo(
 	return results
 
 
-def search_packages_rpc(
-	pattern: str,
-	*,
-	needle: str | None,
-	limit: int | None,
-) -> list[SearchResult]:
-	# Default to 50 results if no limit specified
-	if limit is None:
-		limit = 50
-	raw_results = aur_rpc_search_results(pattern)
-	candidates: list[tuple[int, dict[str, object]]] = []
-	for entry in raw_results:
-		name = entry.get("Name")
-		if not isinstance(name, str):
-			continue
-		score = compute_match_score(name, regex=None, needle=needle)
-		# Note regex set to none
-		if score is None:
-			continue
-		candidates.append((score, entry))
-	candidates.sort(key=lambda item: (item[0], item[1].get("Name", "")))
-	if limit is not None and limit >= 0:
-		candidates = candidates[:limit]
-	installed_set = installed_package_set()
-	results: list[SearchResult] = []
-	for score, entry in candidates:
-		name_value = entry.get("Name")
-		if not isinstance(name_value, str):
-			continue
-		version = _str_or_none(entry.get("Version"))
-		description = _str_or_none(entry.get("Description"))
-		votes = None
-		votes_value = entry.get("NumVotes")
-		if isinstance(votes_value, int | float | str):
-			try:
-				votes = int(votes_value)
-			except TypeError, ValueError:
-				votes = None
-		maintainer = entry.get("Maintainer")
-		is_orphan = maintainer in (None, "")
-		results.append(
-			SearchResult(
-				name=name_value,
-				version=version,
-				description=description,
-				installed=name_value in installed_set,
-				score=score,
-				votes=votes,
-				is_orphan=is_orphan,
-			)
-		)
-	return results
-
-
 def order_search_results(results: Sequence[SearchResult]) -> list[SearchResult]:
 	# Lower score = better match; return ascending order (best last when reversed later).
 	return sorted(results, key=lambda result: (result.score, result.name))
@@ -2673,11 +2301,6 @@ def format_search_result(index: int, result: SearchResult) -> list[str]:
 		meta_bits: list[str] = [f"db {result.source}"]
 	elif result.source is not None:
 		meta_bits = [f"{protocol} {result.source}"]
-	# Note using votes we can know its a rpc result
-	elif result.votes is not None:
-		meta_bits = [f"{protocol} aur rpc", f"{result.votes} votes"]
-		if result.is_orphan:
-			meta_bits.append("orphan")
 	else:
 		meta_bits = [f"{protocol} git mirror"]
 	line = f"{index_label} {' '.join(main_parts)}"
@@ -2831,55 +2454,9 @@ def interactive_select_results(results: Sequence[SearchResult]) -> list[SearchRe
 		return selected
 
 
-def _format_epoch(value: object) -> str | None:
-	if isinstance(value, int | float):
-		return time.strftime("%Y-%m-%d", time.gmtime(value))
-	return None
-
-
 def _join_values(values: Iterable[str], *, sort: bool = False) -> str:
 	items = sorted(values) if sort else list(values)
 	return "  ".join(items) if items else "None"
-
-
-def _info_list(info: dict[str, object], key: str) -> str:
-	items = info.get(key)
-	if isinstance(items, list):
-		return _join_values(str(item) for item in items)
-	return "None"
-
-
-def rpc_info_fields(info: dict[str, object]) -> list[tuple[str, str]]:
-	def text(key: str) -> str:
-		value = info.get(key)
-		return str(value) if value not in (None, "") else "None"
-
-	popularity = info.get("Popularity")
-	return [
-		("Repository", "aur"),
-		("Name", text("Name")),
-		("Version", text("Version")),
-		("Description", text("Description")),
-		("URL", text("URL")),
-		("Licenses", _info_list(info, "License")),
-		("Groups", _info_list(info, "Groups")),
-		("Provides", _info_list(info, "Provides")),
-		("Depends On", _info_list(info, "Depends")),
-		("Make Deps", _info_list(info, "MakeDepends")),
-		("Check Deps", _info_list(info, "CheckDepends")),
-		("Optional Deps", _info_list(info, "OptDepends")),
-		("Conflicts With", _info_list(info, "Conflicts")),
-		("Replaces", _info_list(info, "Replaces")),
-		("Maintainer", text("Maintainer")),
-		("Votes", text("NumVotes")),
-		(
-			"Popularity",
-			f"{popularity:.2f}" if isinstance(popularity, int | float) else "None",
-		),
-		("First Submitted", _format_epoch(info.get("FirstSubmitted")) or "None"),
-		("Last Modified", _format_epoch(info.get("LastModified")) or "None"),
-		("Out-of-date", _format_epoch(info.get("OutOfDate")) or "No"),
-	]
 
 
 def _srcinfo_values(srcinfo_content: str, key: str) -> list[str]:
@@ -2969,23 +2546,6 @@ def inspect_package(
 	| None = None,
 	plain: bool = False,
 ) -> None:
-	if USE_AUR_RPC and target == "info" and not repo_url and sources is None:
-		info = aur_rpc_info(package)
-		if info:
-			if plain:
-				print_info_fields(rpc_info_fields(info))
-				return
-			description = _str_or_none(info.get("Description"))
-			_print_info_summary(
-				package,
-				description,
-				dependency_set_from_rpc(info),
-				show_deps=show_deps,
-			)
-			return
-		if USE_AUR_RPC:
-			raise AurGitError(f"Package '{package}' not found via AUR RPC")
-
 	if sources is not None:
 		package_dir = _clone_any_source(package, dest_root, sources, refresh=refresh)
 	else:
@@ -3060,7 +2620,7 @@ def _capitalize_help_action(parser: argparse.ArgumentParser) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
 	parser = argparse.ArgumentParser(
-		description="Work with AUR packages via the git mirror or AUR RPC"
+		description="Build Arch packages from any git source (official Arch packages by default; AUR opt-in)"
 	)
 	parser.add_argument(
 		"-v",
@@ -3083,19 +2643,6 @@ def build_parser() -> argparse.ArgumentParser:
 		"--no-color",
 		action="store_true",
 		help="Disable coloured output",
-	)
-	parser.add_argument(
-		"--aur-rpc",
-		dest="aur_rpc",
-		action="store_true",
-		default=None,
-		help="Force the AUR RPC API; fail instead of falling back to the git mirror",
-	)
-	parser.add_argument(
-		"--git-mirror",
-		dest="aur_rpc",
-		action="store_false",
-		help="Use the git mirror for metadata and dependency resolution",
 	)
 	parser.add_argument(
 		"--use-ssh",
@@ -3488,7 +3035,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901  argparse comm
 		"repo",
 	}
 	# Hoist global flags so they can appear after the subcommand too
-	# (e.g. `grimoire update --git-mirror` instead of only `grimoire --git-mirror update`).
+	# (e.g. `grimoire update --refresh` instead of only `grimoire --refresh update`).
 	if argv_list:
 		implicit_search = (
 			not argv_list[0].startswith("-") and argv_list[0] not in commands
@@ -3524,30 +3071,16 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901  argparse comm
 	dest_root = Path(args.dest_root).expanduser().resolve()
 	refresh: bool = bool(args.refresh)
 
-	global USE_COLOR, USE_AUR_RPC, FORCE_GIT_MIRROR, FORCE_AUR_RPC
-	global USE_SSH, SHALLOW_CLONE, CACHE_DIR, CACHE_TTL
-	global AUR_RPC_ENDPOINT, AUR_GIT_MIRROR
+	global USE_COLOR, USE_SSH, SHALLOW_CLONE, CACHE_DIR, CACHE_TTL, AUR_GIT_MIRROR
 	CACHE_DIR = dest_root / ".searchcache"
 	if refresh:
 		# --refresh means "give me fresh data": expire every read,
 		# keep writing so the cache ends up repopulated.
 		CACHE_TTL = 0
 	USE_COLOR = not getattr(args, "no_color", False) and sys.stdout.isatty()
-	# An [AUR] section's URLs override the RPC endpoint and git mirror (matched by
-	# content, so order/commenting a single line is fine). Scheme is added if omitted,
-	# same as repo aliases -- the RPC URL feeds urllib and the mirror feeds git.
+	# An [AUR] section's URL overrides the git mirror (scheme added if omitted).
 	for raw in load_repo_registry().get("AUR", []):
-		url = _ensure_scheme(raw)
-		if "rpc" in url:
-			AUR_RPC_ENDPOINT = url
-		else:
-			AUR_GIT_MIRROR = url
-	# Backend tri-state: None = auto (RPC, mirror fallback),
-	# True = --aur-rpc (force RPC), False = --git-mirror (force mirror).
-	backend = getattr(args, "aur_rpc", None)
-	USE_AUR_RPC = backend is not False
-	FORCE_GIT_MIRROR = backend is False
-	FORCE_AUR_RPC = backend is True
+		AUR_GIT_MIRROR = _ensure_scheme(raw)
 	USE_SSH = bool(getattr(args, "use_ssh", False))
 	SHALLOW_CLONE = bool(getattr(args, "shallow", False))
 	# Never block on an interactive git auth prompt (e.g. a 404 clone of a templated
@@ -3632,7 +3165,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901  argparse comm
 					)
 					continue
 				repo_url, branch, subdir, repo_fallbacks = pkg_sources[0]
-				if USE_AUR_RPC and not repo_url:
+				if not repo_url:
 					missing_official, unresolved = collect_missing_official_packages(
 						package,
 						dest_root,
@@ -3705,8 +3238,6 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901  argparse comm
 				except re.error as exc:
 					print(f"error: invalid regular expression: {exc}", file=sys.stderr)
 					return 1
-				# Regex search runs over the git mirror, not the AUR RPC.
-				USE_AUR_RPC = False
 			else:
 				needle = args.pattern.lower()
 
@@ -3727,7 +3258,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901  argparse comm
 			for src_alias, src_url in sources:
 				if src_url is None and (src_alias is None or src_alias == "AUR"):
 					results += search_packages(
-						args.pattern, regex=regex_obj, needle=needle, limit=args.limit
+						regex=regex_obj, needle=needle, limit=args.limit
 					)
 					continue
 				r_url, r_branch, r_subdir, _ = _resolve_repo_for_package(
@@ -3888,7 +3419,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901  argparse comm
 						print(f"  {url}")
 		else:
 			parser.error("Unknown command")
-	except (AurGitError, AurRpcForcedError) as exc:
+	except AurGitError as exc:
 		print(f"error: {exc}", file=sys.stderr)
 		if DEBUG:
 			import traceback

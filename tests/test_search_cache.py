@@ -1,25 +1,14 @@
 import contextlib
-import hashlib
 import io
 import json
 import os
 import tempfile
 import time
 import unittest
-import urllib.error
-import urllib.parse
-import urllib.request  # ensure loaded: grimoire imports it lazily, tests patch it
 from pathlib import Path
 from unittest import mock
 
 from grimoireshim import grimoire
-
-
-def _search_cache_key(pattern: str) -> str:
-	query = urllib.parse.urlencode(
-		{"v": "5", "type": "search", "arg": pattern}, doseq=True
-	)
-	return f"search/{hashlib.sha256(query.encode()).hexdigest()}.json"
 
 
 class CacheHelperTests(unittest.TestCase):
@@ -108,38 +97,6 @@ class CachedJsonTests(unittest.TestCase):
 		)
 
 
-class RpcSearchCacheTests(unittest.TestCase):
-	def setUp(self) -> None:
-		tmp = tempfile.TemporaryDirectory()
-		self.addCleanup(tmp.cleanup)
-		patcher = mock.patch.object(grimoire, "CACHE_DIR", Path(tmp.name))
-		patcher.start()
-		self.addCleanup(patcher.stop)
-
-	def test_served_from_cache_without_network(self) -> None:
-		grimoire.cache_put(
-			_search_cache_key("foo"),
-			json.dumps({"type": "search", "results": [{"Name": "foo"}]}),
-		)
-		with mock.patch.object(
-			grimoire.urllib.request, "urlopen", side_effect=AssertionError
-		) as urlopen:
-			results = grimoire.aur_rpc_search_results("foo")
-		self.assertEqual([entry["Name"] for entry in results], ["foo"])
-		urlopen.assert_not_called()
-
-	def test_corrupt_cache_falls_through_to_network(self) -> None:
-		grimoire.cache_put(_search_cache_key("foo"), "{not json")
-		with mock.patch.object(
-			grimoire.urllib.request,
-			"urlopen",
-			side_effect=urllib.error.URLError("offline"),
-		) as urlopen:
-			results = grimoire.aur_rpc_search_results("foo")
-		self.assertEqual(results, [])
-		urlopen.assert_called_once()
-
-
 class NameSourceSelectionTests(unittest.TestCase):
 	def test_gz_primary_skips_git(self) -> None:
 		with (
@@ -163,15 +120,6 @@ class NameSourceSelectionTests(unittest.TestCase):
 		git.assert_called_once()
 		self.assertIn("git mirror", stderr.getvalue())
 
-	def test_force_git_mirror_skips_gz(self) -> None:
-		with (
-			mock.patch.object(grimoire, "FORCE_GIT_MIRROR", True),
-			mock.patch.object(grimoire, "_fetch_names_gz") as gz,
-			mock.patch.object(grimoire, "_fetch_names_git", return_value=["baz"]),
-		):
-			self.assertEqual(grimoire._fetch_aur_package_names(), ["baz"])
-		gz.assert_not_called()
-
 	def test_fresh_names_write_completion_cache(self) -> None:
 		tmp = tempfile.TemporaryDirectory()
 		self.addCleanup(tmp.cleanup)
@@ -185,16 +133,6 @@ class NameSourceSelectionTests(unittest.TestCase):
 			(Path(tmp.name) / "completion.cache").read_text(), "foo\nbar\n"
 		)
 
-	def test_forced_rpc_raises_instead_of_git_fallback(self) -> None:
-		with (
-			mock.patch.object(grimoire, "FORCE_AUR_RPC", True),
-			mock.patch.object(grimoire, "_fetch_names_gz", return_value=None),
-			mock.patch.object(grimoire, "_fetch_names_git") as git,
-			self.assertRaises(grimoire.AurRpcForcedError),
-		):
-			grimoire._fetch_aur_package_names()
-		git.assert_not_called()
-
 
 class GitSearchCacheTests(unittest.TestCase):
 	def setUp(self) -> None:
@@ -203,8 +141,8 @@ class GitSearchCacheTests(unittest.TestCase):
 		self.cache_dir = Path(tmp.name)
 		for target, value in (
 			("CACHE_DIR", self.cache_dir),
-			# pin the git path so the packages.gz fetch never hits the network
-			("FORCE_GIT_MIRROR", True),
+			# force the git-mirror name list so packages.gz never hits the network
+			("_fetch_names_gz", mock.Mock(return_value=None)),
 			("get_aur_remote", mock.Mock(return_value="https://aur.example")),
 			("installed_package_set", mock.Mock(return_value=set())),
 		):

@@ -100,7 +100,6 @@ jobs:
       - name: Enable the AUR and run AUR-backed tests (yay)
         run: |
           rm -f ~/.config/grimoire/repos.conf
-          ./grimoire repo --add 'https://aur.archlinux.org/rpc/' AUR
           ./grimoire repo --add 'https://github.com/archlinux/aur.git' AUR
           ./grimoire fetch $PKG
           ./grimoire --refresh fetch $PKG
@@ -109,7 +108,7 @@ jobs:
           ./grimoire --shallow fetch $PKG
           count=$(git -C ~/.cache/grimoire/$PKG rev-list --count HEAD)
           [ "$count" = "1" ] && echo "shallow depth=1 PASS" || { echo "expected 1, got $count"; exit 1; }
-          ./grimoire --git-mirror fetch --force $PKG
+          ./grimoire fetch --force $PKG
           ./grimoire inspect $PKG --target PKGBUILD
           time ./grimoire search $PATTERN --no-interactive
           ./grimoire install $PKG --noconfirm       # bare -> default [AUR]

@@ -43,8 +43,7 @@
 #  github.com/myuser/myaur/tree/master/pkgs
 #  codeberg.org/myuser/myaur/tree/master/pkgs
 
-# --- The AUR (RPC API + git mirror). Opt-in: uncomment, and move it above [ARCH] to
-# make it your default backend.
+# --- The AUR git mirror (one branch per package). Opt-in: uncomment, and move it
+# above [ARCH] to make it your default source.
 #[AUR]
-#  https://aur.archlinux.org/rpc/
 #  https://github.com/archlinux/aur.git

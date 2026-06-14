@@ -5,25 +5,6 @@ import unittest.mock
 
 from grimoireshim import grimoire
 
-SAMPLE_RPC_INFO = {
-	"Name": "brave-bin",
-	"Version": "1:1.81.9-1",
-	"Description": "Web browser",
-	"URL": "https://brave.com",
-	"License": ["MPL2"],
-	"Depends": ["gtk3", "nss"],
-	"MakeDepends": [],
-	"OptDepends": ["cups: printing"],
-	"Conflicts": ["brave"],
-	"Provides": ["brave"],
-	"Maintainer": "someone",
-	"NumVotes": 42,
-	"Popularity": 1.2345,
-	"FirstSubmitted": 1500000000,
-	"LastModified": 1700000000,
-	"OutOfDate": None,
-}
-
 SAMPLE_SRCINFO = """\
 pkgbase = brave-bin
 \tpkgdesc = Web browser
@@ -67,26 +48,6 @@ class PlainSearchFormatTests(unittest.TestCase):
 		self.assertEqual(
 			grimoire.format_search_result_plain(result), ["aur/foo", "    "]
 		)
-
-
-class RpcInfoFieldTests(unittest.TestCase):
-	def test_si_style_fields(self) -> None:
-		fields = fields_dict(grimoire.rpc_info_fields(SAMPLE_RPC_INFO))
-		self.assertEqual(fields["Repository"], "aur")
-		self.assertEqual(fields["Version"], "1:1.81.9-1")
-		self.assertEqual(fields["URL"], "https://brave.com")
-		self.assertEqual(fields["Licenses"], "MPL2")
-		self.assertEqual(fields["Depends On"], "gtk3  nss")
-		self.assertEqual(fields["Make Deps"], "None")
-		self.assertEqual(fields["Votes"], "42")
-		self.assertEqual(fields["Popularity"], "1.23")
-		self.assertEqual(fields["Out-of-date"], "No")
-		self.assertEqual(fields["Last Modified"], "2023-11-14")
-
-	def test_out_of_date_epoch_renders_as_date(self) -> None:
-		info = dict(SAMPLE_RPC_INFO, OutOfDate=1700000000)
-		fields = fields_dict(grimoire.rpc_info_fields(info))
-		self.assertEqual(fields["Out-of-date"], "2023-11-14")
 
 
 class SrcinfoInfoFieldTests(unittest.TestCase):

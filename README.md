@@ -32,8 +32,7 @@ Also accepts: `SRCINFO`
 
 ### Search Packages
 - `grimoire <term>` (or `grimoire search <term>`) lists matching packages.
-   - Regex `"pattern-*"` automatically uses git mirror
-   - Pass `--git-mirror` or `--aur-rpc` to force either.
+   - Plain text or a regex `"pattern-*"`.
 - `grimoire list` to see installed "foreign" packages recognized by pacman -Qm
 
 ### Inspect & Install & Remove Packages
@@ -42,7 +41,6 @@ Also accepts: `SRCINFO`
 
 - `grimoire inspect <package> --full` Shows full depends
 - `grimoire install <package>` clones the repo, resolves dependencies, builds with `makepkg`
-   - Pass `--git-mirror` to skip AUR RPC
    - Pass `--use-ssh` use SSH instead of HTTPS
 - `grimoire remove <package>` to uninstall from pacman
    - Pass `--clone` to delete the package's clone too
@@ -72,7 +70,7 @@ See [`repos.conf.example`](./repos.conf.example) for examples.
 Section order is precedence: `install`/`fetch`/`inspect`/`update` walk sections top to
 bottom and build from the first that has the package. On first use, **auto-creates**
 `~/.config/grimoire/repos.conf` with `[ARCH]` as the default. AUR is opt-in (a commented
-`[AUR]` section with RPC + git-mirror URLs); enable it (or move it on top) to have AUR
+`[AUR]` section pointing at the AUR git mirror); enable it (or move it on top) to have AUR
 packages resolve, including for a bare `update`.
 
 ### Stay Updated
