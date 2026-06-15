@@ -45,7 +45,7 @@ Also accepts: `SRCINFO`
    - Pass `--submod` (install/fetch) to init the repo's git submodules after checkout. 
 - `grimoire remove <package>` to uninstall from pacman
    - Pass `--clone` to delete the package's clone too
-   - `grimoire remove --cache` drops the search result cache
+   - Pass `--cache` to drop the search result cache
 
 ### Build from other sources
 
