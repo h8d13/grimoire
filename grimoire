@@ -708,23 +708,27 @@ def _resolve_package_dir(clone_root: Path, subdir: str | None, package: str) -> 
 	return build_dir
 
 
+def _tree_has(package_dir: Path, ref: str, path: str) -> bool:
+	# Whether `path` exists in `ref`'s tree, without a worktree. On a --filter=tree:0
+	# clone this lazily fetches only the trees along `path` (provider-agnostic: any git
+	# transport, no forge knowledge).
+	try:
+		out = run_command(
+			["git", "-C", str(package_dir), "ls-tree", "--name-only", ref, path],
+			capture=True,
+		)
+	except AurGitError:
+		return False
+	return bool(str(out).strip())
+
+
 def _build_subpath(
 	package_dir: Path, ref: str, subdir: str | None, package: str
 ) -> str | None:
 	# The subtree holding the PKGBUILD, for a sparse checkout: <subdir>/<pkg>, <subdir>,
 	# or <pkg> (flat). None means the PKGBUILD is at the build root (solo) -> whole tree.
-	def has(path: str) -> bool:
-		try:
-			out = run_command(
-				["git", "-C", str(package_dir), "ls-tree", "--name-only", ref, path],
-				capture=True,
-			)
-		except AurGitError:
-			return False
-		return bool(str(out).strip())
-
 	for cand in [f"{subdir}/{package}", subdir] if subdir else [package]:
-		if cand and has(f"{cand}/PKGBUILD"):
+		if cand and _tree_has(package_dir, ref, f"{cand}/PKGBUILD"):
 			return cand
 	return None
 
@@ -736,15 +740,18 @@ def _clone_with_fallback(
 ) -> Path:
 	# Try each (url, branch, subdir) mirror in order until one clones; the winning
 	# mirror's own subdir resolves the build dir. Used only for a fresh clone.
-	# Clone blobless + sparse so a monorepo (e.g. a flat distro repo) only downloads the
-	# target package's subtree; git transparently falls back to a full clone when the
-	# server can't filter, and a solo repo (PKGBUILD at the root) checks out whole.
+	# Clone treeless (--filter=tree:0) + no-checkout so only commits arrive up front;
+	# `git ls-tree` then lazily fetches just the target package's subtree. A monorepo that
+	# lacks the package costs only that probe -- no full clone, no checkout -- and the miss
+	# is detected provider-agnostically (any git transport, no forge knowledge). git
+	# transparently falls back to a full clone when the server can't filter; a solo repo
+	# (PKGBUILD at the root) checks out whole.
 	errors: list[str] = []
 	for index, (url, branch, subdir) in enumerate(candidates):
 		remote_url = _remote_for(url)
 		if package_dir.exists():
 			shutil.rmtree(package_dir)
-		clone_cmd = ["git", "clone", "--no-checkout", "--filter=blob:none"]
+		clone_cmd = ["git", "clone", "--no-checkout", "--filter=tree:0"]
 		if SHALLOW_CLONE:
 			clone_cmd += ["--depth=1"]
 		clone_cmd += [remote_url, str(package_dir)]
@@ -755,6 +762,10 @@ def _clone_with_fallback(
 				run_command(["git", "-C", str(package_dir), "fetch", "origin", branch])
 			ref = "FETCH_HEAD" if branch else "HEAD"
 			want = _build_subpath(package_dir, ref, subdir, package)
+			if want is None and not _tree_has(package_dir, ref, "PKGBUILD"):
+				# No package subtree and no root PKGBUILD -> this mirror lacks the
+				# package. Skip before any checkout (a monorepo miss stays cheap).
+				raise AurGitError(f"no PKGBUILD for '{package}'")
 			if want:
 				run_command(
 					["git", "-C", str(package_dir), "sparse-checkout", "set", want]

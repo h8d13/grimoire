@@ -393,6 +393,18 @@ class SparseCloneTests(unittest.TestCase):
 		# Sparse: the other package's dir is not materialized in the worktree.
 		self.assertFalse((dest / "foo" / "bar").exists())
 
+	def test_flat_miss_is_absent_without_checkout(self) -> None:
+		# A package absent from a flat monorepo is detected via ls-tree (treeless clone),
+		# not a full checkout: the source resolves as "not found" and leaves nothing.
+		src = self._flat()
+		dest = self.root / "dmiss"
+		with self.assertRaises(grimoire.AurGitError) as ctx:
+			grimoire._clone_any_source(
+				"baz", dest, [(f"file://{src}", None, None, [])], refresh=False
+			)
+		self.assertIn("not found in any configured source", str(ctx.exception))
+		self.assertFalse((dest / "baz").exists())
+
 	def test_subdir_container_checks_out_only_target(self) -> None:
 		src = self.root / "cont"
 		src.mkdir()
