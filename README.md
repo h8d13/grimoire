@@ -63,7 +63,7 @@ Point at anything else that ships a `PKGBUILD` with `--repo-url`/`--repo` on
    grimoire install <pkg>
    ```
 A bare `search <term>` queries **every** section in `repos.conf` and merges the results.
-`--repo <name>` searches only this specific repo.
+`--repo <name>` searches only this specific repo and precedes the `.conf`.
 
 See [`repos.conf.example`](./repos.conf.example) for examples.
 
