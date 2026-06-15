@@ -81,6 +81,8 @@ bottom and build from the first that has the package. On first use, **auto-creat
 
 `update` re-pulls every tracked package already; no `--refresh` needed.
 
+---
+
 <details>
 <summary>Additional Options</summary>
 
@@ -95,8 +97,6 @@ bottom and build from the first that has the package. On first use, **auto-creat
    - `grimoire search <term> --plain` pacman `-Ss` style two-line output for scripting (best match first)
    - `grimoire inspect <pkg> --plain` pacman `-Si` style `Key : Value` output for scripting
    - `grimoire list --repo <name>` lists every package in a repo `REPO Pkg Version`
-
----
 
 </details>
 
