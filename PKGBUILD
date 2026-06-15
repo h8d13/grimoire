@@ -9,7 +9,7 @@ url="https://github.com/mackilanu/grimaur"
 # _dev_branch="dot-cache"
 
 license=('MIT')
-depends=('python' 'git')
+depends=('python' 'git' 'base-devel')
 provides=('grimoire')
 conflicts=('grimoire')
 source=("$pkgname::git+$url.git")
