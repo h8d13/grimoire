@@ -73,9 +73,11 @@ bottom and build from the first that has the package. On first use, **auto-creat
 
 ### Cryptographic trust
 
-- Pass `--verify` (install/fetch) to require a valid GPG signature before building. If you point at an annotated tag (`--rev <tag>`) it runs `git verify-tag` on it (for projects that sign releases, not every commit); otherwise it runs `git verify-commit` on HEAD. Aborts if the target is unsigned, has a bad signature, or the signer's key isn't in your keyring:  `gpg --recv-keys <fingerprint>`. Checks signature validity, not key trust.
-
-
+- Pass `--verify` (install/fetch) to require a valid GPG signature before building.
+If you point at an annotated tag (`--rev <tag>`) it runs `git verify-tag`:
+on either the passed `--ref` or latest HEAD commit.
+Aborts if the target is unsigned, has a bad signature, or the signer's key isn't in your keyring:
+`gpg --recv-keys <fingerprint>`. Checks signature validity, not key trust.
 
 ### Stay Updated
 
