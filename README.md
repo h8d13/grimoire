@@ -117,8 +117,8 @@ bottom and build from the first that has the package. On first use, **auto-creat
    - [git.1](https://www.kernel.org/pub/software/scm/git/docs/git.html)
    - [makepkg.8](https://man.archlinux.org/man/makepkg.8) 
    - [PKGBUILD.5](https://man.archlinux.org/man/PKGBUILD.5)
-   - [pacman.8]https://man.archlinux.org/man/pacman.8
-   - [vercmp.8]https://man.archlinux.org/man/vercmp.8
+   - [pacman.8](https://man.archlinux.org/man/pacman.8)
+   - [vercmp.8](https://man.archlinux.org/man/vercmp.8)
    - [find-libprovides.1](https://man.archlinux.org/man/find-libprovides.1)
    - [updpkgsums.8](https://man.archlinux.org/man/updpkgsums.8)
 
