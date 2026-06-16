@@ -856,6 +856,18 @@ def clean_clones(dest_root: Path) -> None:
 	print(f"Removed {removed} clone(s) from {dest_root}" if removed else "No clones to remove")
 
 
+def _remove_clone(package: str, dest_root: Path) -> None:
+	# Drop one package's clone dir, leaving any install untouched. inspect/fetch create
+	# clones too, so one can exist for a package that was never installed.
+	package_dir = dest_root / package
+	if package_dir.exists():
+		print(f"Removing clone {package_dir}")
+		shutil.rmtree(package_dir)
+		print(f"Removed clone for {style(package, GREEN)}")
+	else:
+		print(f"No clone found at {package_dir}")
+
+
 @overload
 def run_command(
 	cmd: Sequence[str],
@@ -2053,24 +2065,7 @@ def build_package(package: str, dest_root: Path, *, noconfirm: bool) -> None:
 	)
 
 
-def remove_package(
-	package: 	str,
-	dest_root: 	Path,
-	*,
-	noconfirm: 	bool,
-	remove_clone: 	bool,
-) -> None:
-	# Clone removal first: inspect/fetch also create clones, so one can
-	# exist for a package that was never installed.
-	if remove_clone:
-		package_dir = dest_root / package
-		if package_dir.exists():
-			print(f"Removing clone {package_dir}")
-			shutil.rmtree(package_dir)
-			print(f"Removed clone for {style(package, GREEN)}")
-		else:
-			print(f"No clone found at {package_dir}")
-
+def remove_package(package: str, *, noconfirm: bool) -> None:
 	if not is_installed(package):
 		print(f"Package {style(package, BOLD)} is not installed")
 		return
@@ -3191,19 +3186,20 @@ def build_parser() -> tuple[argparse.ArgumentParser, frozenset[str]]:
 	remove_parser.add_argument(
 		"--noconfirm", action="store_true", help="Pass --noconfirm to pacman"
 	)
-	remove_parser.add_argument(
-		"--clone",
-		action="store_true",
-		help="Also remove the package's clone from dest-root",
-	)
 
 	clean_parser = subparsers.add_parser(
 		"clean", help="Clear cached data from dest-root (search cache by default)"
 	)
 	clean_parser.add_argument(
+		"packages",
+		nargs="*",
+		metavar="package",
+		help="Remove only these packages' clones (leaves the install in place)",
+	)
+	clean_parser.add_argument(
 		"--clones",
 		action="store_true",
-		help="Also remove every cloned package build tree from dest-root",
+		help="Remove every cloned package build tree from dest-root",
 	)
 
 	build_cmd = subparsers.add_parser(
@@ -3519,16 +3515,18 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901  argparse comm
 				print("error: nothing to remove (specify a package)", file=sys.stderr)
 				return 2
 			for package in args.packages:
-				remove_package(
-					package,
-					dest_root,
-					noconfirm=args.noconfirm,
-					remove_clone=args.clone,
-				)
+				remove_package(package, noconfirm=args.noconfirm)
 		elif args.command == "clean":
-			clear_search_cache()
-			if args.clones:
+			if args.packages and args.clones:
+				print("error: pass packages or --clones, not both", file=sys.stderr)
+				return 2
+			if args.packages:
+				for package in args.packages:
+					_remove_clone(package, dest_root)
+			elif args.clones:
 				clean_clones(dest_root)
+			else:
+				clear_search_cache()
 		elif args.command == "build":
 			for package in args.packages:
 				build_package(package, dest_root, noconfirm=args.noconfirm)
@@ -3729,109 +3727,110 @@ if __name__ == "__main__":
 # def cached_json(key, ttl, fetch)  :807
 # def clear_search_cache()  :828
 # def clean_clones(dest_root)  :843
-# def run_command(cmd, cwd, capture, check, env)  :860
-# def run_command(cmd, cwd, capture, check, env)  :871
-# def run_command(cmd, cwd, capture, check, env)  :881
-# def _resolve_build_dir(clone_root, subdir)  :913
-# def _resolve_package_dir(clone_root, subdir, package)  :925
-# def _tree_has(package_dir, ref, path)  :939
-# def _build_subpath(package_dir, ref, subdir, package)  :953
-# def _subdir_hint(package_dir, ref, package)  :964
-# def _clone_with_fallback(package_dir, candidates, package)  :983
-# def _normalize_git_url(url)  :1039
-# def _clone_origin(package_dir)  :1055
-# def _is_aur_origin(origin)  :1066
-# def _origin_label(package_dir)  :1072
-# def _init_submodules(clone_root)  :1081
-# def ensure_clone(package, dest_root, source, refresh, submodules)  :1094
-# def _clone_resolved(package, dest_root, refresh, submodules, source, sources)  :1198
-# def _clone_any_source(package, dest_root, sources, refresh, submodules)  :1218
-# def read_srcinfo(package_dir)  :1263
-# def _iter_srcinfo_kv(srcinfo_content)  :1272
-# def _str_or_none(value)  :1283
-# def _assemble_version(pkgver, pkgrel, epoch)  :1287
-# def parse_dependencies(srcinfo_content)  :1304
-# def _normalize_dep(dep_entry)  :1336
-# def _pkgbase_guesses(dep)  :1345
-# def parse_srcinfo_metadata(srcinfo_content)  :1356
-# def _reset_git_worktree(package_dir, refs)  :1370
-# def _ref_is_annotated_tag(package_dir, ref)  :1402
-# def _classify_verify_failure(output, min_trust)  :1414
-# def _verify_signature(package_dir, package, ref, min_trust)  :1434
-# def _pacman_returns_zero(args)  :1475
-# def invalidate_inst_cache()  :1491
-# def _list_local_db_packages()  :1495
-# def installed_package_set()  :1510
-# def is_installed(package)  :1523
-# def exists_in_sync_repo(package)  :1528
-# def is_dependency_satisfied(dep)  :1532
-# def package_provides(package)  :1537
-# def _search_aur_candidates(dep, limit)  :1550
-# def resolve_aur_dependency(dep)  :1577
-#     def add_candidate(name)  :1583
-# def resolve_official_dependency(dep)  :1619
-# def exists_in_aur_mirror(package)  :1641
-# def list_foreign_packages()  :1651
-# def _local_head(package_dir)  :1669
-# def _git_remote_head(url, ref)  :1681
-# def _aur_remote_head(package)  :1691
-# def get_installed_version(package)  :1699
-# def list_installed_packages()  :1711
-# def list_repo_packages(name, dest_root)  :1725
-# def fetch_git_file(package, path)  :1771
-# def git_srcinfo_metadata(package)  :1794
-# def install_official_packages(packages, noconfirm)  :1804
-# def collect_missing_official_packages(package, dest_root, refresh, visited)  :1817
-# def build_and_install(package_dir, noconfirm, refresh)  :1863
-# def _classify_build_deps(deps, package)  :1883
-# def _confirm_aur_dependencies(aur_dependencies, virtual_providers)  :1913
-# def install_package(package, dest_root, refresh, noconfirm, visited, preinstalled_official, source, sources, update_to, verify, min_trust, submodules, local_dir)  :1931
-# def _find_pkgbuild_dir(clone_root, package)  :2021
-# def build_package(package, dest_root, noconfirm)  :2038
-# def remove_package(package, dest_root, noconfirm, remove_clone)  :2056
-# def get_ignored_packages()  :2091
-# def _resolve_update_spec(package, alias, url, branch, subdir)  :2115
-# def _probe_aur_update(package, dest_root)  :2131
-# def _probe_git_update(package, dest_root, source, refresh)  :2145
-# def _find_update_source(package, update_specs, dest_root, refresh, branch, subdir)  :2172
-# def _run_system_update(noconfirm)  :2194
-# def _collect_update_candidates(targets)  :2215
-# def _update_target_label(candidate)  :2235
-# def _update_source_label(repo, repo_url, update_specs)  :2244
-# def _plan_updates(candidates, update_specs, dest_root, ignored, skip_devel, refresh, branch, subdir)  :2257
-# def _rebuild_updates(selected, winning_source, dest_root, refresh, noconfirm)  :2313
-# def _print_missing_notes(missing, source_label)  :2342
-# def update_packages(dest_root, refresh, noconfirm, update_system, include_devel, targets, repo, repo_url, branch, subdir)  :2349
-# def search_packages(regex, needle, limit)  :2425
-# def _fetch_aur_meta()  :2434
-# def _fetch_names_git()  :2460
-# def _fetch_aur_packages()  :2465
-# def _fetch_aur_packages_with_completion()  :2480
-# def aur_packages()  :2492
-# def is_regex(pattern)  :2502
-# def compute_match_score(name, regex, needle)  :2507
-# def search_packages_git(regex, needle, limit)  :2532
-# def _repo_package_names(repo_url, branch, subdir, clone_dir)  :2564
-# def _enumerate_repo(repo_url, branch, subdir, dest_root)  :2598
-# def search_packages_repo(repo_url, branch, subdir, regex, needle, limit, source, dest_root, alias)  :2623
-# def order_search_results(results)  :2693
-# def format_search_result(index, result)  :2698
-# def format_search_result_plain(result)  :2725
-# def print_search_results(results)  :2737
-# def interactive_select_updates(candidates)  :2745
-# def parse_selection(selection, max_index)  :2781
-# def interactive_select_results(results)  :2817
-# def _join_values(values, sort)  :2843
-# def _srcinfo_values(srcinfo_content, key)  :2848
-# def srcinfo_info_fields(package, srcinfo_content, repo)  :2852
-#     def first(key)  :2859
-#     def join(values)  :2863
-# def print_info_fields(fields)  :2883
-# def _print_info_summary(package, description, deps)  :2889
-# def inspect_package(package, dest_root, refresh, target, source, sources, plain)  :2911
-# def fetch_package(package, dest_root, refresh, source, sources, verify, min_trust, submodules)  :2944
-# def _search_all_sources(alias, repo_url, regex, needle, limit, branch, subdir, dest_root)  :2970
-# def _install_search_picks(selected, dest_root, explicit_url, branch, subdir, refresh, noconfirm)  :3023
-# def build_parser()  :3071
-# def main(argv)  :3363
+# def _remove_clone(package, dest_root)  :859
+# def run_command(cmd, cwd, capture, check, env)  :872
+# def run_command(cmd, cwd, capture, check, env)  :883
+# def run_command(cmd, cwd, capture, check, env)  :893
+# def _resolve_build_dir(clone_root, subdir)  :925
+# def _resolve_package_dir(clone_root, subdir, package)  :937
+# def _tree_has(package_dir, ref, path)  :951
+# def _build_subpath(package_dir, ref, subdir, package)  :965
+# def _subdir_hint(package_dir, ref, package)  :976
+# def _clone_with_fallback(package_dir, candidates, package)  :995
+# def _normalize_git_url(url)  :1051
+# def _clone_origin(package_dir)  :1067
+# def _is_aur_origin(origin)  :1078
+# def _origin_label(package_dir)  :1084
+# def _init_submodules(clone_root)  :1093
+# def ensure_clone(package, dest_root, source, refresh, submodules)  :1106
+# def _clone_resolved(package, dest_root, refresh, submodules, source, sources)  :1210
+# def _clone_any_source(package, dest_root, sources, refresh, submodules)  :1230
+# def read_srcinfo(package_dir)  :1275
+# def _iter_srcinfo_kv(srcinfo_content)  :1284
+# def _str_or_none(value)  :1295
+# def _assemble_version(pkgver, pkgrel, epoch)  :1299
+# def parse_dependencies(srcinfo_content)  :1316
+# def _normalize_dep(dep_entry)  :1348
+# def _pkgbase_guesses(dep)  :1357
+# def parse_srcinfo_metadata(srcinfo_content)  :1368
+# def _reset_git_worktree(package_dir, refs)  :1382
+# def _ref_is_annotated_tag(package_dir, ref)  :1414
+# def _classify_verify_failure(output, min_trust)  :1426
+# def _verify_signature(package_dir, package, ref, min_trust)  :1446
+# def _pacman_returns_zero(args)  :1487
+# def invalidate_inst_cache()  :1503
+# def _list_local_db_packages()  :1507
+# def installed_package_set()  :1522
+# def is_installed(package)  :1535
+# def exists_in_sync_repo(package)  :1540
+# def is_dependency_satisfied(dep)  :1544
+# def package_provides(package)  :1549
+# def _search_aur_candidates(dep, limit)  :1562
+# def resolve_aur_dependency(dep)  :1589
+#     def add_candidate(name)  :1595
+# def resolve_official_dependency(dep)  :1631
+# def exists_in_aur_mirror(package)  :1653
+# def list_foreign_packages()  :1663
+# def _local_head(package_dir)  :1681
+# def _git_remote_head(url, ref)  :1693
+# def _aur_remote_head(package)  :1703
+# def get_installed_version(package)  :1711
+# def list_installed_packages()  :1723
+# def list_repo_packages(name, dest_root)  :1737
+# def fetch_git_file(package, path)  :1783
+# def git_srcinfo_metadata(package)  :1806
+# def install_official_packages(packages, noconfirm)  :1816
+# def collect_missing_official_packages(package, dest_root, refresh, visited)  :1829
+# def build_and_install(package_dir, noconfirm, refresh)  :1875
+# def _classify_build_deps(deps, package)  :1895
+# def _confirm_aur_dependencies(aur_dependencies, virtual_providers)  :1925
+# def install_package(package, dest_root, refresh, noconfirm, visited, preinstalled_official, source, sources, update_to, verify, min_trust, submodules, local_dir)  :1943
+# def _find_pkgbuild_dir(clone_root, package)  :2033
+# def build_package(package, dest_root, noconfirm)  :2050
+# def remove_package(package, noconfirm)  :2068
+# def get_ignored_packages()  :2086
+# def _resolve_update_spec(package, alias, url, branch, subdir)  :2110
+# def _probe_aur_update(package, dest_root)  :2126
+# def _probe_git_update(package, dest_root, source, refresh)  :2140
+# def _find_update_source(package, update_specs, dest_root, refresh, branch, subdir)  :2167
+# def _run_system_update(noconfirm)  :2189
+# def _collect_update_candidates(targets)  :2210
+# def _update_target_label(candidate)  :2230
+# def _update_source_label(repo, repo_url, update_specs)  :2239
+# def _plan_updates(candidates, update_specs, dest_root, ignored, skip_devel, refresh, branch, subdir)  :2252
+# def _rebuild_updates(selected, winning_source, dest_root, refresh, noconfirm)  :2308
+# def _print_missing_notes(missing, source_label)  :2337
+# def update_packages(dest_root, refresh, noconfirm, update_system, include_devel, targets, repo, repo_url, branch, subdir)  :2344
+# def search_packages(regex, needle, limit)  :2420
+# def _fetch_aur_meta()  :2429
+# def _fetch_names_git()  :2455
+# def _fetch_aur_packages()  :2460
+# def _fetch_aur_packages_with_completion()  :2475
+# def aur_packages()  :2487
+# def is_regex(pattern)  :2497
+# def compute_match_score(name, regex, needle)  :2502
+# def search_packages_git(regex, needle, limit)  :2527
+# def _repo_package_names(repo_url, branch, subdir, clone_dir)  :2559
+# def _enumerate_repo(repo_url, branch, subdir, dest_root)  :2593
+# def search_packages_repo(repo_url, branch, subdir, regex, needle, limit, source, dest_root, alias)  :2618
+# def order_search_results(results)  :2688
+# def format_search_result(index, result)  :2693
+# def format_search_result_plain(result)  :2720
+# def print_search_results(results)  :2732
+# def interactive_select_updates(candidates)  :2740
+# def parse_selection(selection, max_index)  :2776
+# def interactive_select_results(results)  :2812
+# def _join_values(values, sort)  :2838
+# def _srcinfo_values(srcinfo_content, key)  :2843
+# def srcinfo_info_fields(package, srcinfo_content, repo)  :2847
+#     def first(key)  :2854
+#     def join(values)  :2858
+# def print_info_fields(fields)  :2878
+# def _print_info_summary(package, description, deps)  :2884
+# def inspect_package(package, dest_root, refresh, target, source, sources, plain)  :2906
+# def fetch_package(package, dest_root, refresh, source, sources, verify, min_trust, submodules)  :2939
+# def _search_all_sources(alias, repo_url, regex, needle, limit, branch, subdir, dest_root)  :2965
+# def _install_search_picks(selected, dest_root, explicit_url, branch, subdir, refresh, noconfirm)  :3018
+# def build_parser()  :3066
+# def main(argv)  :3359
 #############

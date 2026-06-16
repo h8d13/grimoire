@@ -72,13 +72,13 @@ _grimoire() {
                     _arguments \
                         $global_opts \
                         '--noconfirm[Skip confirmation prompts]' \
-                        "--clone[Also remove the package's clone]" \
                         '1::package:_grimoire_foreign_packages'
                     ;;
                 clean)
                     _arguments \
                         $global_opts \
-                        '--clones[Also remove every cloned package build tree]'
+                        '--clones[Remove every cloned package build tree]' \
+                        '*:package:_grimoire_foreign_packages'
                     ;;
                 build)
                     _arguments \

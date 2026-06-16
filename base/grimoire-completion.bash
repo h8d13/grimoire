@@ -43,7 +43,7 @@ _grimoire_completion()
                 opts="$global_opts --noconfirm --verify --min-trust --repo-url --repo --subdir --rev --submod"
                 ;;
             remove)
-                opts="$global_opts --noconfirm --clone"
+                opts="$global_opts --noconfirm"
                 ;;
             clean)
                 opts="$global_opts --clones"
@@ -103,7 +103,7 @@ _grimoire_completion()
 
     # Complete package names based on subcommand
     case "$subcmd" in
-        remove|update|build)
+        remove|clean|update|build)
             # Complete with installed foreign packages (build also accepts any fetched name)
             local packages
             packages=$(pacman -Qmq 2>/dev/null)

@@ -44,9 +44,9 @@ Also accepts: `SRCINFO`
    - Pass `--use-ssh` use SSH instead of HTTPS
    - Pass `--submod` (install/fetch) to init the repo's git submodules after checkout.
 - `grimoire remove <package>` to uninstall from pacman
-   - Pass `--clone` to delete the package's clone too
 - `grimoire clean` drops the search result cache (and completion cache)
-   - Pass `--clones` to also remove every cloned package build tree
+   - `grimoire clean <package>` removes just that package's clone (leaves the install)
+   - Pass `--clones` to remove every cloned package build tree
 
 ### Build from other sources
 

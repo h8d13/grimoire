@@ -58,11 +58,8 @@ complete -c grimoire -n '__fish_seen_subcommand_from fetch install' -l verify -d
 complete -c grimoire -n '__fish_seen_subcommand_from fetch install' -l min-trust -x -a 'marginal fully ultimate' -d 'Implies --verify and require this owner-trust level'
 complete -c grimoire -n '__fish_seen_subcommand_from fetch install' -l submod -d 'Init git submodules after checkout (git submodule update --init --recursive)'
 
-# remove
-complete -c grimoire -n '__fish_seen_subcommand_from remove' -l clone -d "Also remove the package's clone"
-
 # clean
-complete -c grimoire -n '__fish_seen_subcommand_from clean' -l clones -d 'Also remove every cloned package build tree'
+complete -c grimoire -n '__fish_seen_subcommand_from clean' -l clones -d 'Remove every cloned package build tree'
 
 # update
 complete -c grimoire -n '__fish_seen_subcommand_from update' -l devel -d 'Include VCS/devel packages'
@@ -86,4 +83,4 @@ complete -c grimoire -n '__fish_seen_subcommand_from repo' -l ls -d 'List regist
 
 # Package positionals
 complete -c grimoire -n '__fish_seen_subcommand_from install fetch inspect search' -a '(__grimoire_aur_packages)'
-complete -c grimoire -n '__fish_seen_subcommand_from remove update build' -a '(__grimoire_foreign_packages)' -d 'installed'
+complete -c grimoire -n '__fish_seen_subcommand_from remove clean update build' -a '(__grimoire_foreign_packages)' -d 'installed'
