@@ -1,7 +1,7 @@
 # Fish completion for grimoire helper
 # Place in ~/.config/fish/completions/ or /usr/share/fish/vendor_completions.d/
 
-set -l commands fetch install remove build update search inspect list repo
+set -l commands fetch install remove clean build update search inspect list repo
 
 # Complete AUR names from the cache grimoire writes alongside packages.json;
 # seed it in the background on first use.
@@ -28,6 +28,7 @@ complete -c grimoire -f
 complete -c grimoire -n "not __fish_seen_subcommand_from $commands" -a fetch -d 'Clone a package locally'
 complete -c grimoire -n "not __fish_seen_subcommand_from $commands" -a install -d 'Resolve dependencies and build/install a package'
 complete -c grimoire -n "not __fish_seen_subcommand_from $commands" -a remove -d 'Remove an installed package'
+complete -c grimoire -n "not __fish_seen_subcommand_from $commands" -a clean -d 'Clear cached data from dest-root (search cache by default)'
 complete -c grimoire -n "not __fish_seen_subcommand_from $commands" -a build -d 'Build+install a fetched (possibly edited) package, no re-clone'
 complete -c grimoire -n "not __fish_seen_subcommand_from $commands" -a update -d 'Upgrade installed foreign packages'
 complete -c grimoire -n "not __fish_seen_subcommand_from $commands" -a search -d 'Search packages via the configured backend'
@@ -59,7 +60,9 @@ complete -c grimoire -n '__fish_seen_subcommand_from fetch install' -l submod -d
 
 # remove
 complete -c grimoire -n '__fish_seen_subcommand_from remove' -l clone -d "Also remove the package's clone"
-complete -c grimoire -n '__fish_seen_subcommand_from remove' -l cache -d 'Remove the search result cache'
+
+# clean
+complete -c grimoire -n '__fish_seen_subcommand_from clean' -l clones -d 'Also remove every cloned package build tree'
 
 # update
 complete -c grimoire -n '__fish_seen_subcommand_from update' -l devel -d 'Include VCS/devel packages'

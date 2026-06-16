@@ -64,7 +64,7 @@ class EnsureCloneRefTests(unittest.TestCase):
 
 		# default globals already False at import; pin them so a developer's
 		# environment can't flip shallow clones on and break commit checkout.
-		for name in ("shallow_clone", "use_ssh"):
+		for name in ("use_shallow", "use_ssh"):
 			patcher = mock.patch.object(grimoire.CONFIG, name, False)
 			patcher.start()
 			self.addCleanup(patcher.stop)
@@ -166,7 +166,7 @@ class UpdateRepoPrimitivesTests(unittest.TestCase):
 		)
 		pkg_dir = grimoire.ensure_clone("foo", self.dest, src, refresh=False)
 		self.assertEqual(pkg_dir, self.dest / "foo" / "pkgs" / "foo")
-		version, _ = grimoire._parse_srcinfo_metadata(grimoire.read_srcinfo(pkg_dir))
+		version, _ = grimoire.parse_srcinfo_metadata(grimoire.read_srcinfo(pkg_dir))
 		self.assertEqual(version, "2.5-1")
 
 
@@ -186,7 +186,7 @@ class OriginSwitchTests(unittest.TestCase):
 			(repo / "PKGBUILD").write_text(f"pkgname=foo\npkgver={who}\n")
 			_git(repo, "add", "-A")
 			_git(repo, "commit", "-qm", "x")
-		for name in ("shallow_clone", "use_ssh"):
+		for name in ("use_shallow", "use_ssh"):
 			patcher = mock.patch.object(grimoire.CONFIG, name, False)
 			patcher.start()
 			self.addCleanup(patcher.stop)
@@ -240,6 +240,12 @@ class SearchRepoTests(unittest.TestCase):
 		)
 		patcher.start()
 		self.addCleanup(patcher.stop)
+		# Isolate the global search cache: another test calling main() leaves
+		# CONFIG.cache_dir set, and the sync-DB cache key is machine-stable, so a cached
+		# enumeration would leak between the templated-search cases. Disable it here.
+		saved_cache_dir = grimoire.CONFIG.cache_dir
+		self.addCleanup(setattr, grimoire.CONFIG, "cache_dir", saved_cache_dir)
+		grimoire.CONFIG.cache_dir = None
 
 	def test_enumerates_subdir_packages_with_metadata(self) -> None:
 		results = grimoire.search_packages_repo(
@@ -354,7 +360,7 @@ class SparseCloneTests(unittest.TestCase):
 		tmp = tempfile.TemporaryDirectory()
 		self.addCleanup(tmp.cleanup)
 		self.root = Path(tmp.name)
-		for name in ("shallow_clone", "use_ssh"):
+		for name in ("use_shallow", "use_ssh"):
 			patcher = mock.patch.object(grimoire.CONFIG, name, False)
 			patcher.start()
 			self.addCleanup(patcher.stop)
@@ -504,6 +510,12 @@ class FlatRepoSearchTests(unittest.TestCase):
 		)
 		patcher.start()
 		self.addCleanup(patcher.stop)
+		# Isolate the global search cache: another test calling main() leaves
+		# CONFIG.cache_dir set, and the sync-DB cache key is machine-stable, so a cached
+		# enumeration would leak between the templated-search cases. Disable it here.
+		saved_cache_dir = grimoire.CONFIG.cache_dir
+		self.addCleanup(setattr, grimoire.CONFIG, "cache_dir", saved_cache_dir)
+		grimoire.CONFIG.cache_dir = None
 
 	def test_enumerates_root_packages(self) -> None:
 		results = grimoire.search_packages_repo(
@@ -580,7 +592,7 @@ class CloneAnySourceTests(unittest.TestCase):
 			_git(repo, "add", "-A")
 			_git(repo, "commit", "-qm", "x")
 		self.bad = "file:///definitely/not/here.git"
-		for name in ("shallow_clone", "use_ssh"):
+		for name in ("use_shallow", "use_ssh"):
 			patcher = mock.patch.object(grimoire.CONFIG, name, False)
 			patcher.start()
 			self.addCleanup(patcher.stop)

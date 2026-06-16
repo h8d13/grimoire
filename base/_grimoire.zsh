@@ -37,6 +37,7 @@ _grimoire() {
                 'fetch:Clone a package locally'
                 'install:Resolve dependencies and build/install a package'
                 'remove:Remove an installed package'
+                'clean:Clear cached data from dest-root (search cache by default)'
                 'build:Build+install a fetched (possibly edited) package, no re-clone'
                 'update:Upgrade installed foreign packages'
                 'search:Search packages via the configured backend'
@@ -72,8 +73,12 @@ _grimoire() {
                         $global_opts \
                         '--noconfirm[Skip confirmation prompts]' \
                         "--clone[Also remove the package's clone]" \
-                        '--cache[Remove the search result cache]' \
                         '1::package:_grimoire_foreign_packages'
+                    ;;
+                clean)
+                    _arguments \
+                        $global_opts \
+                        '--clones[Also remove every cloned package build tree]'
                     ;;
                 build)
                     _arguments \

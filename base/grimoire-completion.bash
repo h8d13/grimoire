@@ -43,7 +43,10 @@ _grimoire_completion()
                 opts="$global_opts --noconfirm --verify --min-trust --repo-url --repo --subdir --rev --submod"
                 ;;
             remove)
-                opts="$global_opts --noconfirm --clone --cache"
+                opts="$global_opts --noconfirm --clone"
+                ;;
+            clean)
+                opts="$global_opts --clones"
                 ;;
             build)
                 opts="$global_opts --noconfirm"
@@ -93,7 +96,7 @@ _grimoire_completion()
 
     # If no subcommand yet, complete subcommands
     if [[ -z "$subcmd" ]]; then
-        local subcmds="fetch install remove build update search inspect list repo"
+        local subcmds="fetch install remove clean build update search inspect list repo"
         mapfile -t COMPREPLY < <(compgen -W "$subcmds" -- "$cur")
         return 0
     fi

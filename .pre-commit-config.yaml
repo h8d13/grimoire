@@ -17,6 +17,16 @@ repos:
     - id: mypy
       args: [--strict]
       fail_fast: true
+  - repo: https://github.com/RobertCraigie/pyright-python
+    rev: v1.1.410
+    hooks:
+      - id: pyright
+        pass_filenames: false  # check the [tool.pyright] include set, not just staged files
+  - repo: https://github.com/pylint-dev/pylint
+    rev: v4.0.6
+    hooks:
+      - id: pylint
+        files: ^grimoire$
   - repo: local
     hooks:
       - id: outline

@@ -3,6 +3,7 @@ r"""grimoire: repos, fetch, inspect, search, list, update, and install/remove.
 
 It natively speaks all things `makepkg`. And works outside of AUR using `git`.
 I.e: Private software colletions, Public organizations repositories, ...
+
 What is defined as VUR (Virtual User Repo).
 Or official Arch Linux packages from their Gitlab.
 
@@ -20,7 +21,7 @@ Official repository dependencies are installed with pacman when they are missing
 
                 grimoire 0.1.3
 
-It was fully reworked following the AUR malware SCA (13/06/26) to support any source...
+It was fully reworked following AUR malware SCA (13/06/26) to support any source...
 
 ASCII: Donovan Baker
 ## /* SPDX-FileCopyrightText: 2026
@@ -49,15 +50,18 @@ import urllib.parse
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypedDict, overload
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple, overload
 
 if TYPE_CHECKING:
 	from collections.abc import Callable, Iterable, Iterator, Sequence
 
+
 __appname__: Final = "grimoire"
 __version__: Final = "dev"
 
+
 DEBUG: Final = os.environ.get("DEBUG", "").lower() in ("1", "true", "yes")
+
 
 RESET: 	Final = "\033[0m"
 BOLD: 	Final = "\033[1m"
@@ -67,6 +71,24 @@ YELLOW: Final = "\033[33m"
 RED: 	Final = "\033[31m"
 DIM: 	Final = "\033[2m"
 
+
+GITHUB_RAW_BASE: 	Final = "https://raw.githubusercontent.com/archlinux/aur"
+_VCS_SUFFIXES: 		Final = ("-git", "-vcs", "-svn", "-hg", "-bzr", "-darcs", "-cvs")
+
+
+# GPG owner-trust levels accepted by --min-trust (git's gpg.minTrustLevel).
+type TrustLevel = 	Literal["marginal", "fully", "ultimate"]
+# What `inspect` can render.
+type InspectTarget = 	Literal["info", "PKGBUILD", "SRCINFO"]
+
+
+_ELEV_TOOLS: 		Final = ("sudo", "doas", "run0", "su")  # order matters here
+_GLOBAL_VALUE_OPTIONS: 	Final = {"--dest-root"}
+
+
+_CONF_NAME: Final = "repos.ini"
+
+
 @dataclass
 class _RuntimeConfig:
 	# Process-wide runtime state, set once from argv in main() (replaces module globals
@@ -74,85 +96,13 @@ class _RuntimeConfig:
 	# chroots where HOME/XDG may not); inst_cache is the lazy, invalidatable pacman set.
 	use_color: 	bool = False
 	use_ssh: 	bool = False
-	shallow_clone: 	bool = False
+	use_shallow: 	bool = False
 	cache_dir: 	Path | None = None
 	cache_ttl: 	int = 3600
 	inst_cache: 	set[str] | None = None
 
 
 CONFIG = _RuntimeConfig()
-
-GITHUB_RAW_BASE: 	Final = "https://raw.githubusercontent.com/archlinux/aur"
-_VCS_SUFFIXES: 		Final = ("-git", "-vcs", "-svn", "-hg", "-bzr", "-darcs", "-cvs")
-_ELEV_TOOLS: 		Final = ("sudo", "doas", "run0", "su")  # order matters here
-_GLOBAL_VALUE_OPTIONS: 	Final = {"--dest-root"}
-
-_PACMAN_AUTH_RE: 	Final = re.compile(r'^\s*PACMAN_AUTH\s*=\s*\(?\s*"?([^"\s)]+)"?')
-_PACMAN_DBPATH_RE: 	Final = re.compile(r"^\s*DBPath\s*=\s*(\S+)")
-_DEP_SPLIT_RE: 		Final = re.compile(r"[<>~=]+")
-_DESC_FIELD_RE: 	Final = re.compile(r"%(\w+)%\n([^\n]*)")
-
-# Third-party repos (cachyos, ...) have no recipe, exclude from the templated search.
-_OFFICIAL_REPO_RE: Final = re.compile(
-	r"^(core|extra|multilib)(-testing|-staging)?$|^(gnome|kde)-unstable$"
-)
-_HOSTISH_RE: Final = re.compile(r"[a-z0-9-]+(\.[a-z0-9-]+)+$", re.IGNORECASE)
-
-
-_SRCINFO_KEYS: Final = {
-	"depends",
-	"makedepends",
-	"checkdepends",
-	"optdepends",
-	"pkgname",
-	"pkgbase",
-	"pkgdesc",
-}
-
-
-_GLOBAL_FLAG_OPTIONS: Final = {
-	"--refresh",
-	"--no-color",
-	"--use-ssh",
-	"--shallow",
-	"--version",
-	"-v",
-}
-
-# SSH user overrides per host. --use-ssh rewrites https://<host>/<path> ->
-# ssh://<user>@<host>/<path>(.git); an unlisted host defaults to user "git" (the universal
-# forge convention -- GitHub/GitLab/Gitea/Forgejo/Bitbucket all use it), so the only entry
-# strictly needed is a host whose user differs (aur.archlinux.org -> "aur"). The listed
-# hosts are also mirrored as child-process insteadOf rules (which the git@-default cannot
-# cover), so the common forges stay enumerated here.
-SSH_REWRITE_HOSTS: Final = {
-	"github.com": "git",
-	"gitlab.com": "git",
-	"codeberg.org": "git",
-	"bitbucket.org": "git",
-	"aur.archlinux.org": "aur",
-}
-
-
-_CONF_NAME: Final = "repos.ini"
-# Written on first use when no repos.ini exists. Default source is [ARCH] (build
-# official packages from source); the AUR is opt-in (commented out).
-_DEFAULT_CONF: Final = """\
-# Example grimoire config. Manage with `grimoire repo`.
-# Top takes precedence. Spaces do not matter.
-# Template support: {pkg} = package name, {pkgbase} = its pkgbase
-# (Ie: amd-ucode -> linux-firmware)
-
-# Insert a custom repo here. Examples can be found in the repo.
-
-# Default: Arch's official packages.
-[ARCH]
-https://gitlab.archlinux.org/archlinux/packaging/packages/{pkgbase}.git
-
-# Off by default (AUR is opt-in).
-[AUR]
-false
-"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,12 +143,6 @@ class UpdateCandidate:
 	local_head: 		str | None
 
 
-# GPG owner-trust levels accepted by --min-trust (git's gpg.minTrustLevel).
-type TrustLevel = 	Literal["marginal", "fully", "ultimate"]
-# What `inspect` can render.
-type InspectTarget = 	Literal["info", "PKGBUILD", "SRCINFO"]
-
-
 class RepoRef(NamedTuple):
 	# One git mirror as (url, ref, subdir): ref is a branch/tag/commit, subdir selects
 	# a package dir inside a monorepo. The unit of a fallback/candidate chain.
@@ -232,15 +176,71 @@ class CloneSource(NamedTuple):
 	repo_fallbacks: list[RepoRef] | None = None
 
 
-class AurMetaEntry(TypedDict, total=False):
-	# One record of the AUR packages-meta-v1 dump (only the fields grimoire reads).
-	Name: str
-	Version: str
-	Description: str
-
-
 class GrimoireErr(RuntimeError):
 	"""Wraps fatal errors coming from the helper."""
+
+
+_SRCINFO_KEYS: Final = {
+	"depends",
+	"makedepends",
+	"checkdepends",
+	"optdepends",
+	"pkgname",
+	"pkgbase",
+	"pkgdesc",
+}
+
+
+_GLOBAL_FLAG_OPTIONS: Final = {
+	"--refresh",
+	"--no-color",
+	"--use-ssh",
+	"--shallow",
+	"--version",
+	"-v",
+}
+
+# SSH user overrides per host. --use-ssh rewrites https://<host>/<path> ->
+# ssh://<user>@<host>/<path>(.git); an unlisted host defaults to user "git" (the universal
+# forge convention -- GitHub/GitLab/Gitea/Forgejo/Bitbucket all use it), so the only entry
+# strictly needed is a host whose user differs (aur.archlinux.org -> "aur"). The listed
+# hosts are also mirrored as child-process insteadOf rules (which the git@-default cannot
+# cover), so the common forges stay enumerated here.
+SSH_REWRITE_HOSTS: Final = {
+	"github.com": "git",
+	"gitlab.com": "git",
+	"codeberg.org": "git",
+	"bitbucket.org": "git",
+	"aur.archlinux.org": "aur",
+}
+
+_DEFAULT_CONF: Final = """\
+# Example grimoire config. Manage with `grimoire repo`.
+# Top takes precedence. Spaces do not matter.
+# Template support: {pkg} = package name, {pkgbase} = its pkgbase
+# (Ie: amd-ucode -> linux-firmware)
+
+# Insert a custom repo here. Examples can be found in the repo.
+
+# Default: Arch's official packages.
+[ARCH]
+https://gitlab.archlinux.org/archlinux/packaging/packages/{pkgbase}.git
+
+# Off by default (AUR is opt-in).
+[AUR]
+false
+"""
+
+_PACMAN_AUTH_RE: 	Final = re.compile(r'^\s*PACMAN_AUTH\s*=\s*\(?\s*"?([^"\s)]+)"?')
+_PACMAN_DBPATH_RE: 	Final = re.compile(r"^\s*DBPath\s*=\s*(\S+)")
+_DEP_SPLIT_RE: 		Final = re.compile(r"[<>~=]+")
+_DESC_FIELD_RE: 	Final = re.compile(r"%(\w+)%\n([^\n]*)")
+
+# Third-party repos (cachyos, ...) have no recipe, exclude from the templated search.
+_OFFICIAL_REPO_RE: Final = re.compile(
+	r"^(core|extra|multilib)(-testing|-staging)?$|^(gnome|kde)-unstable$"
+)
+_HOSTISH_RE: Final = re.compile(r"[a-z0-9-]+(\.[a-z0-9-]+)+$", re.IGNORECASE)
 
 
 def style(text: str, *codes: str) -> str:
@@ -320,45 +320,44 @@ def _pacman_db_path() -> Path:
 	return Path("/var/lib/pacman")
 
 
+def _iter_db_descs(db: Path, name_prefix: str | None) -> Iterator[dict[str, str]]:
+	# Desc-field dict for every package in one sync-DB tarball; a corrupt/unreadable DB
+	# yields nothing. name_prefix pre-filters members by dir (fast single-package path);
+	# `r:*` autodetects compression.
+	import tarfile
+
+	with (
+		contextlib.suppress(OSError, tarfile.TarError),
+		tarfile.open(db, "r:*") as tar,
+	):
+		for member in tar:
+			name = member.name
+			if not name.endswith("/desc"):
+				continue
+			if name_prefix is not None and not name.startswith(name_prefix):
+				continue
+			extracted = tar.extractfile(member)
+			if extracted is None:
+				continue
+			raw = extracted.read().decode("utf-8", "replace")
+			yield dict(_DESC_FIELD_RE.findall(raw))
+
+
 def _iter_sync_db_desc(
 	name_prefix: str | None = None,
 ) -> Iterator[tuple[str, dict[str, str]]]:
-	# Walk the pacman sync DBs yielding (repo, desc-fields) for every package `desc`
-	# entry. DBs may be gzip (Arch) or zstd (CachyOS); `r:*` autodetects. name_prefix
-	# skips members whose dir doesn't start with it before the parse (fast path for a
-	# single-package lookup).
-	import tarfile
-
+	# (repo, desc-fields) for every package in the OFFICIAL Arch sync DBs. Third-party
+	# repos (cachyos, a custom myrepo) have no Arch GitLab PKGBUILD, so they're skipped.
 	sync = _pacman_db_path() / "sync"
 	try:
 		dbs = sorted(sync.glob("*.db"))
 	except OSError:
 		return
 	for db in dbs:
-		repo = db.stem
-		if not _OFFICIAL_REPO_RE.match(repo):
+		if not _OFFICIAL_REPO_RE.match(db.stem):
 			continue
-		try:
-			with tarfile.open(db, "r:*") as tar:
-				for member in tar:
-					name = member.name
-					if not name.endswith("/desc"):
-						continue
-					if name_prefix is not None and not name.startswith(name_prefix):
-						continue
-					extracted = tar.extractfile(member)
-					if extracted is None:
-						continue
-					yield (
-						repo,
-						dict(
-							_DESC_FIELD_RE.findall(
-								extracted.read().decode("utf-8", "replace")
-							)
-						),
-					)
-		except OSError, tarfile.TarError:
-			continue
+		for fields in _iter_db_descs(db, name_prefix):
+			yield db.stem, fields
 
 
 @cache
@@ -385,6 +384,35 @@ def _sync_db_packages() -> tuple[tuple[str, str | None, str | None, str], ...]:
 		if name:
 			out.append((name, fields.get("VERSION"), fields.get("DESC"), repo))
 	return tuple(out)
+
+
+def _sync_db_signature() -> str | None:
+	# A cache key for the sync DBs' current state: name+mtime+size per *.db. Changes on
+	# `pacman -Sy`, so a list cached under it auto-invalidates when the DBs are refreshed.
+	sync = _pacman_db_path() / "sync"
+	try:
+		dbs = sorted(sync.glob("*.db"))
+	except OSError:
+		return None
+	parts: list[str] = []
+	for db in dbs:
+		try:
+			st = db.stat()
+		except OSError:
+			continue
+		parts.append(f"{db.name}:{int(st.st_mtime)}:{st.st_size}")
+	return "|".join(parts) or None
+
+
+def _sync_db_packages_cached() -> list[tuple[str, str | None, str | None, str]]:
+	# search re-parses every sync-DB tarball otherwise (~0.5s of tarfile/gzip work on a
+	# stock install); cache the enumerated list to disk so it survives across invocations,
+	# keyed on _sync_db_signature so `pacman -Sy` (or --refresh, via cache_ttl=0) expires it.
+	sig = _sync_db_signature()
+	if sig is None:
+		return list(_sync_db_packages())
+	key = "syncdb/" + hashlib.sha256(sig.encode()).hexdigest()[:16] + ".json"
+	return cached_json(key, CONFIG.cache_ttl, lambda: list(_sync_db_packages())) or []
 
 
 def _read_pacman_auth() -> str | None:
@@ -740,7 +768,7 @@ def _resolve_sources(
 	return sources or [CloneSource(None, branch, subdir, [])]
 
 
-def cache_get(key: str, ttl: int) -> str | None:
+def _cache_get(key: str, ttl: int) -> str | None:
 	if CONFIG.cache_dir is None:
 		return None
 	path = CONFIG.cache_dir / key
@@ -762,7 +790,7 @@ def _atomic_write(path: Path, payload: str) -> None:
 		tmp.replace(path)
 
 
-def cache_put(key: str, payload: str) -> None:
+def _cache_put(key: str, payload: str) -> None:
 	if CONFIG.cache_dir is None:
 		return
 	_atomic_write(CONFIG.cache_dir / key, payload)
@@ -776,20 +804,24 @@ def _completion_cache_path() -> Path | None:
 	return CONFIG.cache_dir.parent / "completion.cache"
 
 
-def cached_json(key: str, ttl: int, fetch: Callable[[], object]) -> object:
-	payload = cache_get(key, ttl)
+def cached_json[T](key: str, ttl: int, fetch: Callable[[], T]) -> T | None:
+	# The payload is JSON we wrote from a fetch() of type T, so a hit decodes straight back
+	# to T (tuples round-trip to lists -- structurally identical for the row access callers
+	# do). It's our own keyed, TTL'd cache, so the decoded value is trusted as-is.
+	payload = _cache_get(key, ttl)
 	if payload is not None:
+		decoded: T | None
 		try:
-			value = json.loads(payload)
+			decoded = json.loads(payload)
 		except json.JSONDecodeError:
-			value = None
-		if value is not None:
+			decoded = None
+		if decoded is not None:
 			if DEBUG:
 				print(f"+ cache hit {key}", file=sys.stderr)
-			return value
+			return decoded
 	value = fetch()
 	if value is not None:
-		cache_put(key, json.dumps(value))
+		_cache_put(key, json.dumps(value))
 	return value
 
 
@@ -806,6 +838,22 @@ def clear_search_cache() -> None:
 		removed = True
 	if not removed:
 		print("No search cache to remove")
+
+
+def clean_clones(dest_root: Path) -> None:
+	# Remove every cloned package build tree under dest-root, leaving the caches alone
+	# (those are files, or the .searchcache dir handled by clear_search_cache). Scratch
+	# dirs (.searchrepo) are clones-adjacent and go too; all are re-created on demand.
+	if not dest_root.exists():
+		print("No clones to remove")
+		return
+	removed = 0
+	for child in dest_root.iterdir():
+		if child == CONFIG.cache_dir or not child.is_dir():
+			continue
+		shutil.rmtree(child, ignore_errors=True)
+		removed += 1
+	print(f"Removed {removed} clone(s) from {dest_root}" if removed else "No clones to remove")
 
 
 @overload
@@ -951,7 +999,7 @@ def _clone_with_fallback(
 		if package_dir.exists():
 			shutil.rmtree(package_dir)
 		clone_cmd = ["git", "clone", "--no-checkout", "--filter=tree:0"]
-		if CONFIG.shallow_clone:
+		if CONFIG.use_shallow:
 			clone_cmd += ["--depth=1"]
 		clone_cmd += [remote_url, str(package_dir)]
 		try:
@@ -1136,7 +1184,7 @@ def ensure_clone(
 		return build
 
 	clone_cmd = ["git", "clone", *clone_extra]
-	if CONFIG.shallow_clone:
+	if CONFIG.use_shallow:
 		clone_cmd += ["--depth=1"]
 	clone_cmd += [remote_url, str(package_dir)]
 	print(style(f"==> cloning from {remote_url}", DIM))
@@ -1305,7 +1353,7 @@ def _pkgbase_guesses(dep: str) -> list[str]:
 	return guesses
 
 
-def _parse_srcinfo_metadata(srcinfo_content: str) -> tuple[str | None, str | None]:
+def parse_srcinfo_metadata(srcinfo_content: str) -> tuple[str | None, str | None]:
 	pkgver = pkgrel = epoch = description = None
 	for key, value in _iter_srcinfo_kv(srcinfo_content):
 		if key == "pkgver" and not pkgver:
@@ -1618,7 +1666,7 @@ def list_foreign_packages() -> dict[str, str]:
 	return names
 
 
-def get_local_head(package_dir: Path) -> str | None:
+def _local_head(package_dir: Path) -> str | None:
 	if not (package_dir / ".git").is_dir():
 		return None
 	try:
@@ -1747,7 +1795,7 @@ def git_srcinfo_metadata(package: str) -> tuple[str, str | None] | None:
 	srcinfo = fetch_git_file(package, ".SRCINFO")
 	if not srcinfo:
 		return None
-	version, description = _parse_srcinfo_metadata(srcinfo)
+	version, description = parse_srcinfo_metadata(srcinfo)
 	if not version:  # no version -> no usable metadata, treat as absent
 		return None
 	return version, description
@@ -2091,7 +2139,7 @@ def _probe_aur_update(package: str, dest_root: Path) -> UpdateProbe | None:
 	rh = _aur_remote_head(package)
 	if rh is None:
 		return None
-	return UpdateProbe(None, rh, get_local_head(dest_root / package))
+	return UpdateProbe(None, rh, _local_head(dest_root / package))
 
 
 def _probe_git_update(
@@ -2110,14 +2158,14 @@ def _probe_git_update(
 		rh = _git_remote_head(s_url, s_branch)
 		if rh is None:
 			return None
-		return UpdateProbe(None, rh, get_local_head(dest_root / package))
+		return UpdateProbe(None, rh, _local_head(dest_root / package))
 	try:
 		pkg_dir = ensure_clone(package, dest_root, source, refresh=refresh)
 	except GrimoireErr:
 		return None
 	if not (pkg_dir / "PKGBUILD").is_file():
 		return None
-	rv = _parse_srcinfo_metadata(read_srcinfo(pkg_dir))[0]
+	rv = parse_srcinfo_metadata(read_srcinfo(pkg_dir))[0]
 	return UpdateProbe(rv, None, None) if rv is not None else None
 
 
@@ -2247,7 +2295,7 @@ def _plan_updates(
 			continue
 		if remote_head:
 			if local_head is None:
-				local_head = get_local_head(dest_root / package)
+				local_head = _local_head(dest_root / package)
 			if local_head and local_head == remote_head:
 				continue
 		pending.append(
@@ -2398,11 +2446,13 @@ def _fetch_aur_meta() -> list[tuple[str, str | None, str | None]] | None:
 		if DEBUG:
 			print(f"+ packages-meta failed: {exc}", file=sys.stderr)
 		return None
-	entries: list[AurMetaEntry] = raw if isinstance(raw, list) else []
+	# raw is the packages-meta array (list of {Name, Version, Description}); iterate the
+	# decoded value directly -- json.loads is typed Any, so entry.get stays usable without
+	# narrowing it to list[Unknown]. A row is kept only when its Name is a string.
 	rows = [
-		(name, _str_or_none(e.get("Version")), _str_or_none(e.get("Description")))
-		for e in entries
-		if isinstance((name := e.get("Name")), str)
+		(name, _str_or_none(entry.get("Version")), _str_or_none(entry.get("Description")))
+		for entry in raw
+		if isinstance((name := entry.get("Name")), str)
 	]
 	return rows or None
 
@@ -2440,16 +2490,13 @@ def _fetch_aur_packages_with_completion() -> (
 
 
 def aur_packages() -> list[tuple[str, str | None, str | None]]:
-	# (name, version, description) for every AUR package. None on a failed fetch so a
-	# transient hiccup is never cached for an hour; cache hits come back as JSON lists.
-	rows = cached_json("aurmeta.json", CONFIG.cache_ttl, _fetch_aur_packages_with_completion)
-	out: list[tuple[str, str | None, str | None]] = []
-	for row in rows if isinstance(rows, list) else []:
-		if isinstance(row, list | tuple) and len(row) >= 1 and isinstance(row[0], str):
-			ver = _str_or_none(row[1]) if len(row) > 1 else None
-			desc = _str_or_none(row[2]) if len(row) > 2 else None
-			out.append((row[0], ver, desc))
-	return out
+	# (name, version, description) for every AUR package; [] on a failed fetch. Backed by
+	# the search cache (aurmeta.json), so a warm call just returns the decoded list -- the
+	# fetch callback fixes the row shape, no per-call re-validation.
+	rows = cached_json(
+		"aurmeta.json", CONFIG.cache_ttl, _fetch_aur_packages_with_completion
+	)
+	return rows or []
 
 
 def is_regex(pattern: str) -> bool:
@@ -2563,12 +2610,12 @@ def _enumerate_repo(
 		shutil.rmtree(clone_dir)
 	out: list[tuple[str, str | None, str | None]] = []
 	for name, srcinfo_dir in _repo_package_names(repo_url, branch, subdir, clone_dir):
-		version: str | None = None
-		description: str | None = None
+		version: 	str | None = None
+		description: 	str | None = None
 		if srcinfo_dir is not None:
 			srcinfo_path = srcinfo_dir / ".SRCINFO"
 			if srcinfo_path.exists():
-				version, description = _parse_srcinfo_metadata(srcinfo_path.read_text())
+				version, description = parse_srcinfo_metadata(srcinfo_path.read_text())
 		out.append((name, version, description))
 	return out
 
@@ -2596,7 +2643,7 @@ def search_packages_repo(
 	if from_db:
 		# A template has no per-alias listing; fall back to the pacman sync DBs (the
 		# Arch GitLab case). Genuinely indexless aliases still error.
-		candidates = list(_sync_db_packages())
+		candidates = _sync_db_packages_cached()
 		if not candidates:
 			raise GrimoireErr(
 				f"alias is templated ({repo_url}) and no pacman sync DB is available "
@@ -2617,9 +2664,8 @@ def search_packages_repo(
 			CONFIG.cache_ttl,
 			lambda: _enumerate_repo(repo_url, branch, subdir, dest_root),
 		)
-		for entry in listed if isinstance(listed, list) else []:
-			if isinstance(entry, (list, tuple)) and len(entry) == 3:
-				candidates.append((entry[0], entry[1], entry[2], source))
+		for name, version, description in listed or []:
+			candidates.append((name, version, description, source))
 
 	results: list[SearchResult] = []
 	for name, version, description, item_source in candidates:
@@ -3150,10 +3196,14 @@ def build_parser() -> tuple[argparse.ArgumentParser, frozenset[str]]:
 		action="store_true",
 		help="Also remove the package's clone from dest-root",
 	)
-	remove_parser.add_argument(
-		"--cache",
+
+	clean_parser = subparsers.add_parser(
+		"clean", help="Clear cached data from dest-root (search cache by default)"
+	)
+	clean_parser.add_argument(
+		"--clones",
 		action="store_true",
-		help="Remove the search result cache (.searchcache) from dest-root",
+		help="Also remove every cloned package build tree from dest-root",
 	)
 
 	build_cmd = subparsers.add_parser(
@@ -3358,7 +3408,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901  argparse comm
 		CONFIG.cache_ttl = 0
 	CONFIG.use_color = not getattr(args, "no_color", False) and sys.stdout.isatty()
 	CONFIG.use_ssh = bool(getattr(args, "use_ssh", False))
-	CONFIG.shallow_clone = bool(getattr(args, "shallow", False))
+	CONFIG.use_shallow = bool(getattr(args, "shallow", False))
 	# Never block on an interactive git auth prompt (e.g. a 404 clone of a templated
 	# URL); fail fast instead. Configured credential helpers still work.
 	os.environ.setdefault("GIT_TERMINAL_PROMPT", "0")
@@ -3465,22 +3515,20 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901  argparse comm
 					submodules=args.submod,
 				)
 		elif args.command == "remove":
-			if args.cache:
-				clear_search_cache()
-			if args.packages:
-				for package in args.packages:
-					remove_package(
-						package,
-						dest_root,
-						noconfirm=args.noconfirm,
-						remove_clone=args.clone,
-					)
-			elif not args.cache:
-				print(
-					"error: nothing to remove (specify a package or --cache)",
-					file=sys.stderr,
-				)
+			if not args.packages:
+				print("error: nothing to remove (specify a package)", file=sys.stderr)
 				return 2
+			for package in args.packages:
+				remove_package(
+					package,
+					dest_root,
+					noconfirm=args.noconfirm,
+					remove_clone=args.clone,
+				)
+		elif args.command == "clean":
+			clear_search_cache()
+			if args.clones:
+				clean_clones(dest_root)
 		elif args.command == "build":
 			for package in args.packages:
 				build_package(package, dest_root, noconfirm=args.noconfirm)
@@ -3625,17 +3673,16 @@ if __name__ == "__main__":
 		sys.exit(130)
 
 #h8d13washere
-# class _RuntimeConfig  :71
-# class DependencySet  :159
-#     def all_build_deps(self)  :166
-# class SearchResult  :171
-# class UpdateCandidate  :188
-# class RepoRef  :202
-# class UpdateProbe  :210
-# class UpdateSpec  :218
-# class CloneSource  :225
-# class AurMetaEntry  :235
-# class GrimoireErr  :242
+# class _RuntimeConfig  :93
+# class DependencySet  :109
+#     def all_build_deps(self)  :116
+# class SearchResult  :121
+# class UpdateCandidate  :138
+# class RepoRef  :146
+# class UpdateProbe  :154
+# class UpdateSpec  :162
+# class CloneSource  :169
+# class GrimoireErr  :179
 # def style(text)  :246
 # def prompt_confirm(message)  :252
 # def is_debug_package(name)  :262
@@ -3647,140 +3694,144 @@ if __name__ == "__main__":
 # def _xdg_config_home()  :299
 # def _makepkg_conf_paths()  :303
 # def _pacman_db_path()  :311
-# def _iter_sync_db_desc(name_prefix)  :323
-# def _resolve_pkgbase(package)  :365
-# def _sync_db_packages()  :376
-# def _read_pacman_auth()  :390
-# def _get_elev()  :404
-# def _elevate(cmd)  :414
-# def _maybe_ssh_rewrite(url)  :423
-# def _remote_for(url)  :438
-# def _ssh_rewrite_git_env()  :444
-# def _ensure_scheme(url)  :460
-# def _split_forge_path(parts, markers, ref_offset, gate)  :475
-# def parse_repo_url(url)  :498
-#     def _rebuild(repo_parts, ref, sub)  :508
-# def _repo_registry_path()  :542
-# def _ensure_repos_conf()  :546
-# def load_repo_registry()  :558
-# def _repos_section_end(lines, header_idx)  :580
-# def add_repo_alias(name, url)  :592
-# def remove_repo_alias(name)  :622
-# def resolve_repo_alias(name)  :638
-# def _aur_enabled()  :647
-# def _resolve_repo_for_package(package, alias, repo_url, branch, subdir)  :658
-#     def _sub(value)  :681
-#     def _resolve(raw)  :696
-# def _resolve_sources(args, package)  :708
-# def cache_get(key, ttl)  :743
-# def _atomic_write(path, payload)  :756
-# def cache_put(key, payload)  :765
-# def _completion_cache_path()  :771
-# def cached_json(key, ttl, fetch)  :779
-# def clear_search_cache()  :796
-# def run_command(cmd, cwd, capture, check, env)  :812
-# def run_command(cmd, cwd, capture, check, env)  :823
-# def run_command(cmd, cwd, capture, check, env)  :833
-# def _resolve_build_dir(clone_root, subdir)  :865
-# def _resolve_package_dir(clone_root, subdir, package)  :877
-# def _tree_has(package_dir, ref, path)  :891
-# def _build_subpath(package_dir, ref, subdir, package)  :905
-# def _subdir_hint(package_dir, ref, package)  :916
-# def _clone_with_fallback(package_dir, candidates, package)  :935
-# def _normalize_git_url(url)  :991
-# def _clone_origin(package_dir)  :1007
-# def _is_aur_origin(origin)  :1018
-# def _origin_label(package_dir)  :1024
-# def _init_submodules(clone_root)  :1033
-# def ensure_clone(package, dest_root, source, refresh, submodules)  :1046
-# def _clone_resolved(package, dest_root, refresh, submodules, source, sources)  :1150
-# def _clone_any_source(package, dest_root, sources, refresh, submodules)  :1170
-# def read_srcinfo(package_dir)  :1215
-# def _iter_srcinfo_kv(srcinfo_content)  :1224
-# def _str_or_none(value)  :1235
-# def _assemble_version(pkgver, pkgrel, epoch)  :1239
-# def parse_dependencies(srcinfo_content)  :1256
-# def _normalize_dep(dep_entry)  :1288
-# def _pkgbase_guesses(dep)  :1297
-# def _parse_srcinfo_metadata(srcinfo_content)  :1308
-# def _reset_git_worktree(package_dir, refs)  :1322
-# def _ref_is_annotated_tag(package_dir, ref)  :1354
-# def _classify_verify_failure(output, min_trust)  :1366
-# def _verify_signature(package_dir, package, ref, min_trust)  :1386
-# def _pacman_returns_zero(args)  :1427
-# def invalidate_inst_cache()  :1443
-# def _list_local_db_packages()  :1447
-# def installed_package_set()  :1462
-# def is_installed(package)  :1475
-# def exists_in_sync_repo(package)  :1480
-# def is_dependency_satisfied(dep)  :1484
-# def package_provides(package)  :1489
-# def _search_aur_candidates(dep, limit)  :1502
-# def resolve_aur_dependency(dep)  :1529
-#     def add_candidate(name)  :1535
-# def resolve_official_dependency(dep)  :1571
-# def exists_in_aur_mirror(package)  :1593
-# def list_foreign_packages()  :1603
-# def get_local_head(package_dir)  :1621
-# def _git_remote_head(url, ref)  :1633
-# def _aur_remote_head(package)  :1643
-# def get_installed_version(package)  :1651
-# def list_installed_packages()  :1663
-# def list_repo_packages(name, dest_root)  :1677
-# def fetch_git_file(package, path)  :1723
-# def git_srcinfo_metadata(package)  :1746
-# def install_official_packages(packages, noconfirm)  :1756
-# def collect_missing_official_packages(package, dest_root, refresh, visited)  :1769
-# def build_and_install(package_dir, noconfirm, refresh)  :1815
-# def _classify_build_deps(deps, package)  :1835
-# def _confirm_aur_dependencies(aur_dependencies, virtual_providers)  :1865
-# def install_package(package, dest_root, refresh, noconfirm, visited, preinstalled_official, source, sources, update_to, verify, min_trust, submodules, local_dir)  :1883
-# def _find_pkgbuild_dir(clone_root, package)  :1973
-# def build_package(package, dest_root, noconfirm)  :1990
-# def remove_package(package, dest_root, noconfirm, remove_clone)  :2008
-# def get_ignored_packages()  :2043
-# def _resolve_update_spec(package, alias, url, branch, subdir)  :2067
-# def _probe_aur_update(package, dest_root)  :2083
-# def _probe_git_update(package, dest_root, source, refresh)  :2097
-# def _find_update_source(package, update_specs, dest_root, refresh, branch, subdir)  :2124
-# def _run_system_update(noconfirm)  :2146
-# def _collect_update_candidates(targets)  :2167
-# def _update_target_label(candidate)  :2187
-# def _update_source_label(repo, repo_url, update_specs)  :2196
-# def _plan_updates(candidates, update_specs, dest_root, ignored, skip_devel, refresh, branch, subdir)  :2209
-# def _rebuild_updates(selected, winning_source, dest_root, refresh, noconfirm)  :2265
-# def _print_missing_notes(missing, source_label)  :2294
-# def update_packages(dest_root, refresh, noconfirm, update_system, include_devel, targets, repo, repo_url, branch, subdir)  :2301
-# def search_packages(regex, needle, limit)  :2377
-# def _fetch_aur_meta()  :2386
-# def _fetch_names_git()  :2410
-# def _fetch_aur_packages()  :2415
-# def _fetch_aur_packages_with_completion()  :2430
-# def aur_packages()  :2442
-# def is_regex(pattern)  :2455
-# def compute_match_score(name, regex, needle)  :2460
-# def search_packages_git(regex, needle, limit)  :2485
-# def _repo_package_names(repo_url, branch, subdir, clone_dir)  :2517
-# def _enumerate_repo(repo_url, branch, subdir, dest_root)  :2551
-# def search_packages_repo(repo_url, branch, subdir, regex, needle, limit, source, dest_root, alias)  :2576
-# def order_search_results(results)  :2647
-# def format_search_result(index, result)  :2652
-# def format_search_result_plain(result)  :2679
-# def print_search_results(results)  :2691
-# def interactive_select_updates(candidates)  :2699
-# def parse_selection(selection, max_index)  :2735
-# def interactive_select_results(results)  :2771
-# def _join_values(values, sort)  :2797
-# def _srcinfo_values(srcinfo_content, key)  :2802
-# def srcinfo_info_fields(package, srcinfo_content, repo)  :2806
-#     def first(key)  :2813
-#     def join(values)  :2817
-# def print_info_fields(fields)  :2837
-# def _print_info_summary(package, description, deps)  :2843
-# def inspect_package(package, dest_root, refresh, target, source, sources, plain)  :2865
-# def fetch_package(package, dest_root, refresh, source, sources, verify, min_trust, submodules)  :2898
-# def _search_all_sources(alias, repo_url, regex, needle, limit, branch, subdir, dest_root)  :2924
-# def _install_search_picks(selected, dest_root, explicit_url, branch, subdir, refresh, noconfirm)  :2977
-# def build_parser()  :3025
-# def main(argv)  :3313
+# def _iter_db_descs(db, name_prefix)  :323
+# def _iter_sync_db_desc(name_prefix)  :346
+# def _resolve_pkgbase(package)  :364
+# def _sync_db_packages()  :375
+# def _sync_db_signature()  :389
+# def _sync_db_packages_cached()  :407
+# def _read_pacman_auth()  :418
+# def _get_elev()  :432
+# def _elevate(cmd)  :442
+# def _maybe_ssh_rewrite(url)  :451
+# def _remote_for(url)  :466
+# def _ssh_rewrite_git_env()  :472
+# def _ensure_scheme(url)  :488
+# def _split_forge_path(parts, markers, ref_offset, gate)  :503
+# def parse_repo_url(url)  :526
+#     def _rebuild(repo_parts, ref, sub)  :536
+# def _repo_registry_path()  :570
+# def _ensure_repos_conf()  :574
+# def load_repo_registry()  :586
+# def _repos_section_end(lines, header_idx)  :608
+# def add_repo_alias(name, url)  :620
+# def remove_repo_alias(name)  :650
+# def resolve_repo_alias(name)  :666
+# def _aur_enabled()  :675
+# def _resolve_repo_for_package(package, alias, repo_url, branch, subdir)  :686
+#     def _sub(value)  :709
+#     def _resolve(raw)  :724
+# def _resolve_sources(args, package)  :736
+# def _cache_get(key, ttl)  :771
+# def _atomic_write(path, payload)  :784
+# def _cache_put(key, payload)  :793
+# def _completion_cache_path()  :799
+# def cached_json(key, ttl, fetch)  :807
+# def clear_search_cache()  :828
+# def clean_clones(dest_root)  :843
+# def run_command(cmd, cwd, capture, check, env)  :860
+# def run_command(cmd, cwd, capture, check, env)  :871
+# def run_command(cmd, cwd, capture, check, env)  :881
+# def _resolve_build_dir(clone_root, subdir)  :913
+# def _resolve_package_dir(clone_root, subdir, package)  :925
+# def _tree_has(package_dir, ref, path)  :939
+# def _build_subpath(package_dir, ref, subdir, package)  :953
+# def _subdir_hint(package_dir, ref, package)  :964
+# def _clone_with_fallback(package_dir, candidates, package)  :983
+# def _normalize_git_url(url)  :1039
+# def _clone_origin(package_dir)  :1055
+# def _is_aur_origin(origin)  :1066
+# def _origin_label(package_dir)  :1072
+# def _init_submodules(clone_root)  :1081
+# def ensure_clone(package, dest_root, source, refresh, submodules)  :1094
+# def _clone_resolved(package, dest_root, refresh, submodules, source, sources)  :1198
+# def _clone_any_source(package, dest_root, sources, refresh, submodules)  :1218
+# def read_srcinfo(package_dir)  :1263
+# def _iter_srcinfo_kv(srcinfo_content)  :1272
+# def _str_or_none(value)  :1283
+# def _assemble_version(pkgver, pkgrel, epoch)  :1287
+# def parse_dependencies(srcinfo_content)  :1304
+# def _normalize_dep(dep_entry)  :1336
+# def _pkgbase_guesses(dep)  :1345
+# def parse_srcinfo_metadata(srcinfo_content)  :1356
+# def _reset_git_worktree(package_dir, refs)  :1370
+# def _ref_is_annotated_tag(package_dir, ref)  :1402
+# def _classify_verify_failure(output, min_trust)  :1414
+# def _verify_signature(package_dir, package, ref, min_trust)  :1434
+# def _pacman_returns_zero(args)  :1475
+# def invalidate_inst_cache()  :1491
+# def _list_local_db_packages()  :1495
+# def installed_package_set()  :1510
+# def is_installed(package)  :1523
+# def exists_in_sync_repo(package)  :1528
+# def is_dependency_satisfied(dep)  :1532
+# def package_provides(package)  :1537
+# def _search_aur_candidates(dep, limit)  :1550
+# def resolve_aur_dependency(dep)  :1577
+#     def add_candidate(name)  :1583
+# def resolve_official_dependency(dep)  :1619
+# def exists_in_aur_mirror(package)  :1641
+# def list_foreign_packages()  :1651
+# def _local_head(package_dir)  :1669
+# def _git_remote_head(url, ref)  :1681
+# def _aur_remote_head(package)  :1691
+# def get_installed_version(package)  :1699
+# def list_installed_packages()  :1711
+# def list_repo_packages(name, dest_root)  :1725
+# def fetch_git_file(package, path)  :1771
+# def git_srcinfo_metadata(package)  :1794
+# def install_official_packages(packages, noconfirm)  :1804
+# def collect_missing_official_packages(package, dest_root, refresh, visited)  :1817
+# def build_and_install(package_dir, noconfirm, refresh)  :1863
+# def _classify_build_deps(deps, package)  :1883
+# def _confirm_aur_dependencies(aur_dependencies, virtual_providers)  :1913
+# def install_package(package, dest_root, refresh, noconfirm, visited, preinstalled_official, source, sources, update_to, verify, min_trust, submodules, local_dir)  :1931
+# def _find_pkgbuild_dir(clone_root, package)  :2021
+# def build_package(package, dest_root, noconfirm)  :2038
+# def remove_package(package, dest_root, noconfirm, remove_clone)  :2056
+# def get_ignored_packages()  :2091
+# def _resolve_update_spec(package, alias, url, branch, subdir)  :2115
+# def _probe_aur_update(package, dest_root)  :2131
+# def _probe_git_update(package, dest_root, source, refresh)  :2145
+# def _find_update_source(package, update_specs, dest_root, refresh, branch, subdir)  :2172
+# def _run_system_update(noconfirm)  :2194
+# def _collect_update_candidates(targets)  :2215
+# def _update_target_label(candidate)  :2235
+# def _update_source_label(repo, repo_url, update_specs)  :2244
+# def _plan_updates(candidates, update_specs, dest_root, ignored, skip_devel, refresh, branch, subdir)  :2257
+# def _rebuild_updates(selected, winning_source, dest_root, refresh, noconfirm)  :2313
+# def _print_missing_notes(missing, source_label)  :2342
+# def update_packages(dest_root, refresh, noconfirm, update_system, include_devel, targets, repo, repo_url, branch, subdir)  :2349
+# def search_packages(regex, needle, limit)  :2425
+# def _fetch_aur_meta()  :2434
+# def _fetch_names_git()  :2460
+# def _fetch_aur_packages()  :2465
+# def _fetch_aur_packages_with_completion()  :2480
+# def aur_packages()  :2492
+# def is_regex(pattern)  :2502
+# def compute_match_score(name, regex, needle)  :2507
+# def search_packages_git(regex, needle, limit)  :2532
+# def _repo_package_names(repo_url, branch, subdir, clone_dir)  :2564
+# def _enumerate_repo(repo_url, branch, subdir, dest_root)  :2598
+# def search_packages_repo(repo_url, branch, subdir, regex, needle, limit, source, dest_root, alias)  :2623
+# def order_search_results(results)  :2693
+# def format_search_result(index, result)  :2698
+# def format_search_result_plain(result)  :2725
+# def print_search_results(results)  :2737
+# def interactive_select_updates(candidates)  :2745
+# def parse_selection(selection, max_index)  :2781
+# def interactive_select_results(results)  :2817
+# def _join_values(values, sort)  :2843
+# def _srcinfo_values(srcinfo_content, key)  :2848
+# def srcinfo_info_fields(package, srcinfo_content, repo)  :2852
+#     def first(key)  :2859
+#     def join(values)  :2863
+# def print_info_fields(fields)  :2883
+# def _print_info_summary(package, description, deps)  :2889
+# def inspect_package(package, dest_root, refresh, target, source, sources, plain)  :2911
+# def fetch_package(package, dest_root, refresh, source, sources, verify, min_trust, submodules)  :2944
+# def _search_all_sources(alias, repo_url, regex, needle, limit, branch, subdir, dest_root)  :2970
+# def _install_search_picks(selected, dest_root, explicit_url, branch, subdir, refresh, noconfirm)  :3023
+# def build_parser()  :3071
+# def main(argv)  :3363
 #############

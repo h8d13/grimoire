@@ -20,39 +20,39 @@ class CacheHelperTests(unittest.TestCase):
 		self.addCleanup(patcher.stop)
 
 	def test_roundtrip(self) -> None:
-		grimoire.cache_put("search/abc.json", '{"ok": 1}')
-		self.assertEqual(grimoire.cache_get("search/abc.json", ttl=60), '{"ok": 1}')
+		grimoire._cache_put("search/abc.json", '{"ok": 1}')
+		self.assertEqual(grimoire._cache_get("search/abc.json", ttl=60), '{"ok": 1}')
 
 	def test_miss_when_absent(self) -> None:
-		self.assertIsNone(grimoire.cache_get("nope.json", ttl=60))
+		self.assertIsNone(grimoire._cache_get("nope.json", ttl=60))
 
 	def test_disabled_when_cache_dir_unset(self) -> None:
 		with mock.patch.object(grimoire.CONFIG, "cache_dir", None):
-			grimoire.cache_put("search/abc.json", '{"ok": 1}')
-			self.assertIsNone(grimoire.cache_get("search/abc.json", ttl=60))
+			grimoire._cache_put("search/abc.json", '{"ok": 1}')
+			self.assertIsNone(grimoire._cache_get("search/abc.json", ttl=60))
 
 	def test_miss_when_expired(self) -> None:
-		grimoire.cache_put("packages.list", "foo\nbar")
+		grimoire._cache_put("packages.list", "foo\nbar")
 		stale = time.time() - 120
 		os.utime(grimoire.CONFIG.cache_dir / "packages.list", (stale, stale))
-		self.assertIsNone(grimoire.cache_get("packages.list", ttl=60))
+		self.assertIsNone(grimoire._cache_get("packages.list", ttl=60))
 
 	def test_clear_search_cache_removes_dir(self) -> None:
 		# subdir, so the enclosing TemporaryDirectory survives the rmtree
 		sub = grimoire.CONFIG.cache_dir / ".searchcache"
 		with mock.patch.object(grimoire.CONFIG, "cache_dir", sub):
-			grimoire.cache_put("search/abc.json", '{"ok": 1}')
+			grimoire._cache_put("search/abc.json", '{"ok": 1}')
 			grimoire.clear_search_cache()
 			self.assertFalse(sub.exists())
 			# idempotent when already gone
 			grimoire.clear_search_cache()
 
 	def test_expired_entry_is_pruned(self) -> None:
-		grimoire.cache_put("packages.list", "foo\nbar")
+		grimoire._cache_put("packages.list", "foo\nbar")
 		path = grimoire.CONFIG.cache_dir / "packages.list"
 		stale = time.time() - 120
 		os.utime(path, (stale, stale))
-		grimoire.cache_get("packages.list", ttl=60)
+		grimoire._cache_get("packages.list", ttl=60)
 		self.assertFalse(path.exists())
 
 
@@ -79,14 +79,14 @@ class CachedJsonTests(unittest.TestCase):
 		self.assertEqual(fetch.call_count, 2)
 
 	def test_corrupt_entry_refetches(self) -> None:
-		grimoire.cache_put("k.json", "{not json")
+		grimoire._cache_put("k.json", "{not json")
 		fetch = mock.Mock(return_value={"ok": 1})
 		self.assertEqual(grimoire.cached_json("k.json", 60, fetch), {"ok": 1})
 		fetch.assert_called_once()
 
 	def test_zero_ttl_refetches_and_repopulates(self) -> None:
 		# --refresh sets CONFIG.cache_ttl=0: every read expires, writes still land
-		grimoire.cache_put("k.json", '{"stale": 1}')
+		grimoire._cache_put("k.json", '{"stale": 1}')
 		stale = time.time() - 1
 		os.utime(grimoire.CONFIG.cache_dir / "k.json", (stale, stale))
 		fetch = mock.Mock(return_value={"fresh": 1})
