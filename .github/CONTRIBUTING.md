@@ -14,9 +14,9 @@ git push
 
 ## Discussions
 
-Bugs and concrete feature requests, should be reported through [GitHub issues tracker](https://github.com/mackilanu/grimoire/issues)
+Bugs and concrete feature requests, should be reported through [GitHub issues tracker](https://github.com/mackilanu/grimaur/issues)
 
-Questions, and suggestions in [GitHub discussions](https://github.com/mackilanu/grimoire/discussions)
+Questions, and suggestions in [GitHub discussions](https://github.com/mackilanu/grimaur/discussions)
 
 ## Coding convention
 
@@ -28,6 +28,6 @@ Tools used to code this mess: `pyright` `mypy` `ruff` `vulture`
 
 `grimoire` is used in installer flows, which make it one `curl` or `wget` away:
 
-[rawlink](https://raw.githubusercontent.com/mackilanu/grimoire/master/grimoire)
+[rawlink](https://raw.githubusercontent.com/mackilanu/grimaur/master/grimoire)
 
 ---

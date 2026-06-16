@@ -15,7 +15,7 @@ because it drives `git` & `makepkg`, it can build [`PKGBUILD`](https://wiki.arch
 
 ### From Github/Python directly
    ```bash
-   git clone https://github.com/mackilanu/grimoire
+   git clone https://github.com/mackilanu/grimaur
    cd grimoire
    ./grimoire <command> # try --help
    # or install globally makepkg -si
@@ -148,6 +148,6 @@ or import ownertrust); a freshly received key is untrusted and will be rejected.
 
 Made with ♡
 
-[Star this repo](https://github.com/mackilanu/grimoire) · [Bugs/Features](https://github.com/mackilanu/grimoire/issues/new) · [Discussions](https://github.com/mackilanu/grimoire/discussions)
+[Star this repo](https://github.com/mackilanu/grimaur) · [Bugs/Features](https://github.com/mackilanu/grimaur/issues/new) · [Discussions](https://github.com/mackilanu/grimaur/discussions)
 
 </div>
