@@ -16,7 +16,7 @@ because it drives `git` & `makepkg`, it can build [`PKGBUILD`](https://wiki.arch
 ### From Github/Python directly
    ```bash
    git clone https://github.com/mackilanu/grimaur
-   cd grimoire
+   cd grimaur
    ./grimoire <command> # try --help
    # or install globally makepkg -si
    ```
