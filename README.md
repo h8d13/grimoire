@@ -114,17 +114,19 @@ bottom and build from the first that has the package. On first use, **auto-creat
 
 - Arch Package [Guidelines](https://wiki.archlinux.org/title/Arch_package_guidelines)
 - Man pages:
-- [git.1](https://www.kernel.org/pub/software/scm/git/docs/git.html)
-- [makepkg.8](https://man.archlinux.org/man/makepkg.8) 
-- [PKGBUILD.5](https://man.archlinux.org/man/PKGBUILD.5)
-- [pacman.8]https://man.archlinux.org/man/pacman.8
-- [vercmp.8]https://man.archlinux.org/man/vercmp.8
-- [find-libprovides.1](https://man.archlinux.org/man/find-libprovides.1)
-- [updpkgsums.8](https://man.archlinux.org/man/updpkgsums.8)
+   - [git.1](https://www.kernel.org/pub/software/scm/git/docs/git.html)
+   - [makepkg.8](https://man.archlinux.org/man/makepkg.8) 
+   - [PKGBUILD.5](https://man.archlinux.org/man/PKGBUILD.5)
+   - [pacman.8]https://man.archlinux.org/man/pacman.8
+   - [vercmp.8]https://man.archlinux.org/man/vercmp.8
+   - [find-libprovides.1](https://man.archlinux.org/man/find-libprovides.1)
+   - [updpkgsums.8](https://man.archlinux.org/man/updpkgsums.8)
 
-- Examples [proto](https://gitlab.archlinux.org/pacman/pacman/-/tree/master/proto)
+Tools:
 - `pacman-contrib` https://archlinux.org/packages/extra/x86_64/pacman-contrib/
 - `devtools` https://archlinux.org/packages/extra/any/devtools/
+
+Packaging examples [proto](https://gitlab.archlinux.org/pacman/pacman/-/tree/master/proto)
 
 ### Cryptographic trust
 
