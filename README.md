@@ -142,6 +142,11 @@ hold passes). To also gate on owner-trust, pass `--min-trust <level>` (implies `
 3 levels: `marginal`, `fully`, or `ultimate`. Establish trust first (`gpg --edit-key <fpr>` → `trust`,
 or import ownertrust); a freshly received key is untrusted and will be rejected.
 
+- Official gitlab.archlinux.org clones ship the upstream source-signing keys as
+`keys/pgp/<fingerprint>.asc`; grimoire imports them into your gpg keyring before building
+(same as `pkgctl build`), so `validpgpkeys` checks pass without a keyserver. AUR and custom
+repos are not auto-imported: fetch those yourself with `gpg --recv-keys <fingerprint>`.
+
 </details>
 
 ---
