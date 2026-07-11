@@ -100,6 +100,20 @@ You can generate it with `grimoire -v`, **auto-creates** `~/.config/grimoire/rep
    - `grimoire inspect <pkg> --plain` pacman `-Si` style `Key : Value` output for scripting
    - `grimoire list --repo <name>` lists every package in a repo `REPO Pkg Version`
 
+### Native CPU builds
+
+- Pass `--native` (global; works with `install`/`build`/`update`) to build with
+  `-march=native -mtune=native` (plus `-C target-cpu=native` for Rust).
+  Writes a makepkg.conf overlay in `--dest-root` that re-sources your real config
+  chain then appends the flags, passed via `makepkg --config`.
+  PKGBUILDs with `options=(!buildflags)` or hardcoded flags, still ignore compiler flags.
+- `grimoire nativeflags` prints this machine's *expanded* equivalents
+  (gcc's `cc1` expansion, rustc's `target_feature` list) as eval-able
+  `CFLAGS=`/`CXXFLAGS=`/`RUSTFLAGS=` lines, for pinning on a build server or in
+  a container. Expanded flags are tied to the compiler version that produced them.
+
+(Trick credits to `sdoregor` on reddit)
+
 </details>
 
 <details>

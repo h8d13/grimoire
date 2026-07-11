@@ -1,7 +1,7 @@
 # Fish completion for grimoire helper
 # Place in ~/.config/fish/completions/ or /usr/share/fish/vendor_completions.d/
 
-set -l commands fetch install remove clean build update search inspect list repo
+set -l commands fetch install remove clean build update search inspect list repo nativeflags
 
 # Complete AUR names from the cache grimoire writes alongside packages.json;
 # seed it in the background on first use.
@@ -35,6 +35,7 @@ complete -c grimoire -n "not __fish_seen_subcommand_from $commands" -a search -d
 complete -c grimoire -n "not __fish_seen_subcommand_from $commands" -a inspect -d 'Show PKGBUILD or dependency information'
 complete -c grimoire -n "not __fish_seen_subcommand_from $commands" -a list -d 'List installed foreign (AUR) packages'
 complete -c grimoire -n "not __fish_seen_subcommand_from $commands" -a repo -d 'Manage repo URL aliases in repos.ini'
+complete -c grimoire -n "not __fish_seen_subcommand_from $commands" -a nativeflags -d 'Print expanded native compiler flags'
 
 # Global flags (valid before or after the subcommand)
 complete -c grimoire -l dest-root -x -a "(__fish_complete_directories (commandline -ct))" -d 'Directory to store cloned packages'
@@ -42,6 +43,7 @@ complete -c grimoire -l refresh -d 'Refresh existing clones before use'
 complete -c grimoire -l no-color -d 'Disable colored output'
 complete -c grimoire -l use-ssh -d 'Use SSH instead of HTTPS for git operations'
 complete -c grimoire -l shallow -d 'Use shallow clones (--depth=1)'
+complete -c grimoire -l native -d 'Build with native CPU optimization (makepkg.conf overlay)'
 complete -c grimoire -s v -l version -d 'Show version'
 
 # Source selection (fetch / install / update / search / inspect)

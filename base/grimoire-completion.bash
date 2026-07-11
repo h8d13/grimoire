@@ -12,7 +12,7 @@ _grimoire_completion()
     fi
 
     # Global options (can appear anywhere before subcommand)
-    local global_opts="--dest-root --refresh --no-color --use-ssh --shallow -v --version"
+    local global_opts="--dest-root --refresh --no-color --use-ssh --shallow --native -v --version"
 
     # Find the subcommand (first non-option word after potential global options)
     local subcmd=""
@@ -96,7 +96,7 @@ _grimoire_completion()
 
     # If no subcommand yet, complete subcommands
     if [[ -z "$subcmd" ]]; then
-        local subcmds="fetch install remove clean build update search inspect list repo"
+        local subcmds="fetch install remove clean build update search inspect list repo nativeflags"
         mapfile -t COMPREPLY < <(compgen -W "$subcmds" -- "$cur")
         return 0
     fi

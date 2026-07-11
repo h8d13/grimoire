@@ -12,6 +12,7 @@ _grimoire() {
         '--no-color[Disable colored output]'
         '--use-ssh[Use SSH instead of HTTPS for git operations]'
         '--shallow[Use shallow clones (--depth=1); default is full history]'
+        '--native[Build with native CPU optimization (makepkg.conf overlay)]'
         '(-v --version)'{-v,--version}'[Show version]'
     )
 
@@ -44,6 +45,7 @@ _grimoire() {
                 'inspect:Show PKGBUILD or dependency information'
                 'list:List installed foreign (AUR) packages'
                 'repo:Manage repo URL aliases in repos.ini'
+                'nativeflags:Print expanded native compiler flags'
             )
             _describe -t commands 'grimoire command' commands
             ;;
@@ -124,6 +126,9 @@ _grimoire() {
                         '--add[Register URL as a mirror under alias NAME]:url: :name:' \
                         '--rm[Remove alias NAME from the registry]:name:' \
                         '--ls[List registered aliases and their mirror URLs]'
+                    ;;
+                nativeflags)
+                    _arguments $global_opts
                     ;;
             esac
             ;;
