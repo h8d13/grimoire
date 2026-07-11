@@ -10,6 +10,7 @@ expanded (machine-pinned) equivalents parsed from gcc/rustc output.
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from grimoireshim import grimoire
 
@@ -98,18 +99,15 @@ class NativeConfTests(unittest.TestCase):
 		def fake_run(cmd: list[str], **kwargs: object) -> None:
 			calls.append(list(cmd))
 
-		orig_run = grimoire.run_command
-		grimoire.run_command = fake_run
-		self.addCleanup(setattr, grimoire, "run_command", orig_run)
 		self.addCleanup(setattr, grimoire.CONFIG, "native_conf", None)
+		with mock.patch.object(grimoire, "run_command", fake_run):
+			grimoire.CONFIG.native_conf = None
+			grimoire.build_and_install(self.root, noconfirm=True)
+			self.assertNotIn("--config", calls[-1])
 
-		grimoire.CONFIG.native_conf = None
-		grimoire.build_and_install(self.root, noconfirm=True)
-		self.assertNotIn("--config", calls[-1])
-
-		conf = grimoire._write_native_conf(self.root)
-		grimoire.CONFIG.native_conf = conf
-		grimoire.build_and_install(self.root, noconfirm=True)
+			conf = grimoire._write_native_conf(self.root)
+			grimoire.CONFIG.native_conf = conf
+			grimoire.build_and_install(self.root, noconfirm=True)
 		self.assertEqual(calls[-1][0], "makepkg")
 		idx = calls[-1].index("--config")
 		self.assertEqual(calls[-1][idx + 1], str(conf))
