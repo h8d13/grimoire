@@ -318,6 +318,47 @@ class ResolvePkgbaseTests(unittest.TestCase):
 			self.assertEqual(self._resolve(Path(tmp), "whatever"), "whatever")
 
 
+class OfficialProjectPathTests(unittest.TestCase):
+	# Mirror of devtools' gitlab_project_name_to_path; expected values are the
+	# real repo names on the Arch GitLab.
+	def test_devtools_mapping_rules(self) -> None:
+		cases = {
+			"tree": "unix-tree",  # GitLab reserved route keyword
+			"tree-sitter": "tree-sitter",  # only the exact name is reserved
+			"libsigc++": "libsigcplusplus",
+			"mysql++": "mysqlplusplus",
+			"dvd+rw-tools": "dvd-rw-tools",  # single '+' between words
+			"bash": "bash",
+			"linux-firmware": "linux-firmware",
+		}
+		for name, expected in cases.items():
+			with self.subTest(name=name):
+				self.assertEqual(grimoire._official_project_path(name), expected)
+
+	def test_official_host_template_encodes_path(self) -> None:
+		official = (
+			"https://gitlab.archlinux.org/archlinux/packaging/packages/{pkgbase}.git"
+		)
+		with mock.patch.object(grimoire, "_resolve_pkgbase", return_value="tree"):
+			url, _, _, _ = grimoire._resolve_repo_for_package(
+				"tree", alias=None, repo_url=official, branch=None, subdir=None
+			)
+		self.assertEqual(
+			url,
+			"https://gitlab.archlinux.org/archlinux/packaging/packages/unix-tree.git",
+		)
+
+	def test_other_hosts_keep_raw_name(self) -> None:
+		url, _, _, _ = grimoire._resolve_repo_for_package(
+			"libsigc++",
+			alias=None,
+			repo_url="https://example.com/{pkg}.git",
+			branch=None,
+			subdir=None,
+		)
+		self.assertEqual(url, "https://example.com/libsigc++.git")
+
+
 class NormalizeGitUrlTests(unittest.TestCase):
 	def test_https_ssh_scp_forms_match(self) -> None:
 		forms = [
