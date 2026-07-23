@@ -309,6 +309,9 @@ def _get_elev() -> str:
 	if preferred and shutil.which(preferred):
 		return preferred
 	for tool in _ELEV_TOOLS:
+		if tool == "run0" and shutil.which("pkcheck") is None:
+			continue  # run0 auths via polkit, optdep of systemd
+			# fall-back to su in this case continue walking
 		if shutil.which(tool):
 			return tool
 	raise GrimoireErr("No privilege elevation tool found.")
